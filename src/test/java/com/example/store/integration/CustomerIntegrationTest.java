@@ -51,14 +51,14 @@ class CustomerIntegrationTest extends AbstractIntegrationTest {
                 .filter(node -> node.get("id").asLong() == 1L)
                 .findFirst()
                 .orElseThrow();
-        assertThat(customer.properties()).extracting("key").containsExactlyInAnyOrder("id", "name", "orders");
+        assertThat(fieldNames(customer)).containsExactlyInAnyOrder("id", "name", "orders");
         assertThat(customer.get("name").asText()).isEqualTo("Muriel Donnelly");
 
         JsonNode order = StreamSupport.stream(customer.get("orders").spliterator(), false)
                 .filter(node -> node.get("id").asLong() == 158L)
                 .findFirst()
                 .orElseThrow();
-        assertThat(order.properties()).extracting("key").containsExactlyInAnyOrder("id", "description");
+        assertThat(fieldNames(order)).containsExactlyInAnyOrder("id", "description");
         assertThat(order.get("description").asText()).isEqualTo("Awesome Concrete Shirt");
     }
 }

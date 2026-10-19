@@ -65,11 +65,11 @@ class OrderIntegrationTest extends AbstractIntegrationTest {
                 .filter(node -> node.get("id").asLong() == 10_000L)
                 .findFirst()
                 .orElseThrow();
-        assertThat(order.properties()).extracting("key").containsExactlyInAnyOrder("id", "description", "customer");
+        assertThat(fieldNames(order)).containsExactlyInAnyOrder("id", "description", "customer");
         assertThat(order.get("description").asText()).isEqualTo("Bespoke Frozen Gloves");
 
         JsonNode customer = order.get("customer");
-        assertThat(customer.properties()).extracting("key").containsExactlyInAnyOrder("id", "name");
+        assertThat(fieldNames(customer)).containsExactlyInAnyOrder("id", "name");
         assertThat(customer.get("id").asLong()).isEqualTo(58L);
         assertThat(customer.get("name").asText()).isEqualTo("Heidi Becker");
     }
