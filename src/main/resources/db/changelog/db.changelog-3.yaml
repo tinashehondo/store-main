@@ -1,0 +1,17 @@
+databaseChangeLog:
+  - changeSet:
+      id: 3-reset-id-sequences
+      author: store-team
+      comment: >-
+        data.sql inserts explicit ids without advancing the BIGSERIAL sequences, so the first
+        INSERT relying on the sequence collides with existing rows. Move each sequence to MAX(id);
+        on an empty table it is reset so that nextval() returns 1.
+      changes:
+        - sql:
+            sql: >-
+              SELECT setval(pg_get_serial_sequence('customer', 'id'), COALESCE(MAX(id), 1), MAX(id) IS NOT NULL)
+              FROM customer;
+        - sql:
+            sql: >-
+              SELECT setval(pg_get_serial_sequence('"order"', 'id'), COALESCE(MAX(id), 1), MAX(id) IS NOT NULL)
+              FROM "order";

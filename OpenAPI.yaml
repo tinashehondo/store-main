@@ -29,6 +29,8 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/Order'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       operationId: getOrders
       description: Get all orders
     post:
@@ -38,19 +40,28 @@ paths:
       responses:
         '201':
           description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       operationId: createOrder
-      description: Create a new order
+      description: >-
+        Create a new order for an existing customer. Returns 422 if `customerId` does not reference an
+        existing customer.
       requestBody:
+        required: true
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                id:
-                  type: integer
-                  format: int64
-                descriptioon:
-                  type: string
+              $ref: '#/components/schemas/CreateOrderRequest'
   /customer:
     get:
       summary: Get Customers
@@ -65,6 +76,8 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/Customer'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       operationId: getCustomers
       description: Get all customers
     post:
@@ -74,19 +87,24 @@ paths:
       responses:
         '201':
           description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Customer'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
       operationId: createCustomer
       description: Create a new customer
       requestBody:
+        required: true
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                id:
-                  type: integer
-                  format: int64
-                name:
-                  type: string
+              $ref: '#/components/schemas/CreateCustomerRequest'
   /products:
     get:
       summary: Get Products
@@ -134,6 +152,37 @@ paths:
                   x-stoplight:
                     id: jbh0jzkonppv8
 components:
+  responses:
+    BadRequest:
+      description: Validation failed or the request body is malformed
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ValidationProblemDetail'
+    NotFound:
+      description: The resource identified by the path does not exist
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+    Conflict:
+      description: The request conflicts with a data integrity constraint
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+    UnprocessableEntity:
+      description: The request body references a resource id that does not exist
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+    InternalServerError:
+      description: Unexpected server error. No internal details are returned.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
   schemas:
     Order:
       title: Order
@@ -150,7 +199,7 @@ components:
             id:
               type: integer
               format: int64
-            description:
+            name:
               type: string
     Customer:
       title: Customer
@@ -173,6 +222,67 @@ components:
                 type: string
                 x-stoplight:
                   id: mq08x82g95zl9
+    CreateOrderRequest:
+      title: CreateOrderRequest
+      type: object
+      required:
+        - description
+        - customerId
+      properties:
+        description:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: Must not be blank.
+        customerId:
+          type: integer
+          format: int64
+          description: Id of an existing customer.
+    CreateCustomerRequest:
+      title: CreateCustomerRequest
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: Must not be blank.
+    ProblemDetail:
+      title: ProblemDetail
+      description: RFC 7807 problem details
+      type: object
+      properties:
+        type:
+          type: string
+          format: uri
+          example: about:blank
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        instance:
+          type: string
+          format: uri
+    ValidationProblemDetail:
+      title: ValidationProblemDetail
+      allOf:
+        - $ref: '#/components/schemas/ProblemDetail'
+        - type: object
+          properties:
+            errors:
+              description: Present when bean validation failed; one entry per invalid field.
+              type: array
+              items:
+                type: object
+                properties:
+                  field:
+                    type: string
+                  message:
+                    type: string
 tags:
   - name: store
     description: store operations
