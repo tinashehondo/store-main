@@ -14,6 +14,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
+import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 
 import java.util.List;
@@ -63,13 +64,32 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
             @NonNull HttpStatusCode status,
             @NonNull WebRequest request) {
         List<Map<String, String>> errors = ex.getBindingResult().getFieldErrors().stream()
-                .map(error -> Map.of(
-                        "field", error.getField(),
-                        "message", String.valueOf(error.getDefaultMessage())))
+                .map(error -> fieldError(error.getField(), error.getDefaultMessage()))
                 .toList();
-        ProblemDetail body = problem(HttpStatus.BAD_REQUEST, "Validation failed", "Request validation failed.");
-        body.setProperty("errors", errors);
-        return handleExceptionInternal(ex, body, headers, status, request);
+        return handleExceptionInternal(ex, validationProblem(errors), headers, status, request);
+    }
+
+    /**
+     * Constraint violations on controller method parameters (e.g. a negative {@code page}), reported with the same
+     * {@code errors} shape as request body validation; {@code field} is the request parameter name.
+     */
+    @Override
+    protected ResponseEntity<Object> handleHandlerMethodValidationException(
+            @NonNull HandlerMethodValidationException ex,
+            @NonNull HttpHeaders headers,
+            @NonNull HttpStatusCode status,
+            @NonNull WebRequest request) {
+        // A violated return value constraint is a server bug, not a bad request: keep Spring's 500.
+        if (ex.getStatusCode().is5xxServerError()) {
+            return super.handleHandlerMethodValidationException(ex, headers, status, request);
+        }
+        List<Map<String, String>> errors = ex.getParameterValidationResults().stream()
+                .flatMap(result -> result.getResolvableErrors().stream()
+                        .map(error -> fieldError(
+                                String.valueOf(result.getMethodParameter().getParameterName()),
+                                error.getDefaultMessage())))
+                .toList();
+        return handleExceptionInternal(ex, validationProblem(errors), headers, status, request);
     }
 
     @Override
@@ -82,6 +102,16 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         ProblemDetail body =
                 problem(HttpStatus.BAD_REQUEST, "Malformed request body", "The request body is not readable.");
         return handleExceptionInternal(ex, body, headers, status, request);
+    }
+
+    private static ProblemDetail validationProblem(List<Map<String, String>> errors) {
+        ProblemDetail body = problem(HttpStatus.BAD_REQUEST, "Validation failed", "Request validation failed.");
+        body.setProperty("errors", errors);
+        return body;
+    }
+
+    private static Map<String, String> fieldError(String field, String message) {
+        return Map.of("field", field, "message", String.valueOf(message));
     }
 
     private static ProblemDetail problem(HttpStatus status, String title, String detail) {

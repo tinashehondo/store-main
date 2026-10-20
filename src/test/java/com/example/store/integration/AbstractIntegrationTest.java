@@ -2,15 +2,22 @@ package com.example.store.integration;
 
 import com.fasterxml.jackson.databind.JsonNode;
 
+import jakarta.persistence.EntityManagerFactory;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.testcontainers.containers.PostgreSQLContainer;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Base class for integration tests against a real PostgreSQL, migrated by Liquibase including the {@code demo} seed
@@ -23,6 +30,7 @@ import java.util.List;
  */
 @SpringBootTest
 @AutoConfigureMockMvc
+@ActiveProfiles("test")
 public abstract class AbstractIntegrationTest {
 
     @ServiceConnection
@@ -32,13 +40,32 @@ public abstract class AbstractIntegrationTest {
         POSTGRES.start();
     }
 
+    private static final Pattern LINK = Pattern.compile("<([^>]*)>;\\s*rel=\"([^\"]+)\"");
+
     @Autowired
     protected MockMvc mockMvc;
+
+    @Autowired
+    private EntityManagerFactory entityManagerFactory;
+
+    protected SqlStatementCounter sqlStatementCounter() {
+        return new SqlStatementCounter(entityManagerFactory);
+    }
 
     /** Names of the top-level fields of a JSON object, used to assert the exact response shape. */
     protected static List<String> fieldNames(JsonNode node) {
         List<String> names = new ArrayList<>();
         node.fieldNames().forEachRemaining(names::add);
         return names;
+    }
+
+    /** Parses an RFC 8288 {@code Link} header into rel to URI, in header order. */
+    protected static Map<String, String> links(String linkHeader) {
+        Map<String, String> links = new LinkedHashMap<>();
+        Matcher matcher = LINK.matcher(linkHeader);
+        while (matcher.find()) {
+            links.put(matcher.group(2), matcher.group(1));
+        }
+        return links;
     }
 }

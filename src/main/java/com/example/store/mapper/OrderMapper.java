@@ -8,13 +8,9 @@ import com.example.store.entity.Order;
 import org.mapstruct.Mapper;
 import org.mapstruct.ReportingPolicy;
 
-import java.util.List;
-
 @Mapper(componentModel = "spring", unmappedTargetPolicy = ReportingPolicy.ERROR)
 public interface OrderMapper {
     OrderDTO orderToOrderDTO(Order order);
-
-    List<OrderDTO> ordersToOrderDTOs(List<Order> orders);
 
     OrderCustomerDTO orderToOrderCustomerDTO(Customer customer);
 }

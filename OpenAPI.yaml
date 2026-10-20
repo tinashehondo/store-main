@@ -20,19 +20,30 @@ paths:
       summary: Get Orders
       tags:
         - store
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
       responses:
         '200':
-          description: OK
+          description: >-
+            One page, ordered by id ascending. The body is a plain array; paging metadata is in the headers.
+          headers:
+            X-Total-Count:
+              $ref: '#/components/headers/X-Total-Count'
+            Link:
+              $ref: '#/components/headers/Link'
           content:
             application/json:
               schema:
                 type: array
                 items:
                   $ref: '#/components/schemas/Order'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '500':
           $ref: '#/components/responses/InternalServerError'
       operationId: getOrders
-      description: Get all orders
+      description: Get one page of orders, each with its customer.
     post:
       summary: Create Order
       tags:
@@ -67,19 +78,32 @@ paths:
       summary: Get Customers
       tags:
         - store
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
       responses:
         '200':
-          description: OK
+          description: >-
+            One page, ordered by id ascending. The body is a plain array; paging metadata is in the headers.
+          headers:
+            X-Total-Count:
+              $ref: '#/components/headers/X-Total-Count'
+            Link:
+              $ref: '#/components/headers/Link'
           content:
             application/json:
               schema:
                 type: array
                 items:
                   $ref: '#/components/schemas/Customer'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '500':
           $ref: '#/components/responses/InternalServerError'
       operationId: getCustomers
-      description: Get all customers
+      description: >-
+        Get one page of customers, each with all of its orders (sorted by id). Note that the embedded orders are not
+        paginated.
     post:
       summary: Create Customer
       tags:
@@ -152,9 +176,47 @@ paths:
                   x-stoplight:
                     id: jbh0jzkonppv8
 components:
+  parameters:
+    Page:
+      name: page
+      in: query
+      description: Zero-based page index. A page past the end returns an empty array.
+      required: false
+      schema:
+        type: integer
+        format: int32
+        minimum: 0
+        default: 0
+    Size:
+      name: size
+      in: query
+      description: Page size. Values above 100 are clamped to 100; values below 1 are rejected with 400.
+      required: false
+      schema:
+        type: integer
+        format: int32
+        minimum: 1
+        maximum: 100
+        default: 20
+  headers:
+    X-Total-Count:
+      description: Total number of elements across all pages.
+      schema:
+        type: integer
+        format: int64
+    Link:
+      description: >-
+        RFC 8288 links to other pages, with relations first, prev (when page > 0), next (when a later page exists)
+        and last. The links carry the effective (possibly clamped) size and keep any other query parameters.
+      schema:
+        type: string
+      example: >-
+        <http://localhost:8080/order?page=0&size=20>; rel="first", <http://localhost:8080/order?page=2&size=20>;
+        rel="prev", <http://localhost:8080/order?page=4&size=20>; rel="next",
+        <http://localhost:8080/order?page=500&size=20>; rel="last"
   responses:
     BadRequest:
-      description: Validation failed or the request body is malformed
+      description: Validation failed, or the request body or a query parameter is malformed
       content:
         application/problem+json:
           schema:

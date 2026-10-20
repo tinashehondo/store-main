@@ -1,0 +1,6 @@
+spring:
+  jpa:
+    properties:
+      hibernate:
+        # Feeds SqlStatementCounter; too costly to leave on in production.
+        generate_statistics: true

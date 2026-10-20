@@ -11,10 +11,10 @@ import com.example.store.repository.OrderRepository;
 
 import lombok.RequiredArgsConstructor;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
-import java.util.List;
 
 @Service
 @RequiredArgsConstructor
@@ -25,9 +25,10 @@ public class OrderService {
     private final CustomerRepository customerRepository;
     private final OrderMapper orderMapper;
 
-    // Mapping happens inside the transaction: open-in-view is disabled and the customer is lazy.
-    public List<OrderDTO> findAll() {
-        return orderMapper.ordersToOrderDTOs(orderRepository.findAll());
+    // Two statements whatever the page size: the page with customers join-fetched, and the count. Mapping happens
+    // inside the transaction as open-in-view is disabled.
+    public Page<OrderDTO> findAll(Pageable pageable) {
+        return orderRepository.findAll(pageable).map(orderMapper::orderToOrderDTO);
     }
 
     @Transactional

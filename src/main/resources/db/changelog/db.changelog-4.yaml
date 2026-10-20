@@ -1,0 +1,16 @@
+databaseChangeLog:
+  - changeSet:
+      id: 4-index-order-customer-id
+      author: store-team
+      comment: >-
+        PostgreSQL does not index foreign key columns. Without this index, loading the orders of a page of customers
+        and every FK check on customer delete/update scan the whole order table. CONCURRENTLY avoids blocking writes
+        on "order" while the index builds, and cannot run inside a transaction. No IF NOT EXISTS on purpose: a failed
+        concurrent build leaves an INVALID index behind, and the rerun must fail loudly rather than skip over it.
+      runInTransaction: false
+      changes:
+        - sql:
+            sql: CREATE INDEX CONCURRENTLY idx_order_customer_id ON "order" (customer_id)
+      rollback:
+        - sql:
+            sql: DROP INDEX CONCURRENTLY IF EXISTS idx_order_customer_id

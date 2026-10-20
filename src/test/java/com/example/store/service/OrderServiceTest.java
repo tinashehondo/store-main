@@ -15,6 +15,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 
 import java.util.List;
 import java.util.Optional;
@@ -48,11 +52,13 @@ class OrderServiceTest {
         order.setId(1L);
         order.setDescription("Test Order");
         order.setCustomer(customer(1L, "John Doe"));
-        when(orderRepository.findAll()).thenReturn(List.of(order));
+        Pageable pageable = PageRequest.of(0, 20);
+        when(orderRepository.findAll(pageable)).thenReturn(new PageImpl<>(List.of(order), pageable, 1));
 
-        List<OrderDTO> result = orderService.findAll();
+        Page<OrderDTO> result = orderService.findAll(pageable);
 
-        assertThat(result).singleElement().satisfies(dto -> {
+        assertThat(result.getTotalElements()).isEqualTo(1);
+        assertThat(result.getContent()).singleElement().satisfies(dto -> {
             assertThat(dto.getId()).isEqualTo(1L);
             assertThat(dto.getDescription()).isEqualTo("Test Order");
             assertThat(dto.getCustomer().getId()).isEqualTo(1L);

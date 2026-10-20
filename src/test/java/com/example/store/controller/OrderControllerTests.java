@@ -9,6 +9,10 @@ import com.example.store.service.OrderService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -34,16 +38,55 @@ class OrderControllerTests {
     private OrderService orderService;
 
     @Test
-    void getAllOrdersReturnsOrdersWithTheirCustomer() throws Exception {
-        when(orderService.findAll()).thenReturn(List.of(order(1L, "Test Order", 1L, "John Doe")));
+    void getAllOrdersReturnsPlainArrayWithPagingHeaders() throws Exception {
+        when(orderService.findAll(any()))
+                .thenReturn(new PageImpl<>(
+                        List.of(order(11L, "Test Order", 1L, "John Doe")), Pagination.pageRequest(1, 10), 25));
 
-        mockMvc.perform(get("/order"))
+        mockMvc.perform(get("/order").param("page", "1").param("size", "10"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$", hasSize(1)))
-                .andExpect(jsonPath("$[0].id").value(1))
+                .andExpect(jsonPath("$[0].id").value(11))
                 .andExpect(jsonPath("$[0].description").value("Test Order"))
                 .andExpect(jsonPath("$[0].customer.id").value(1))
-                .andExpect(jsonPath("$[0].customer.name").value("John Doe"));
+                .andExpect(jsonPath("$[0].customer.name").value("John Doe"))
+                .andExpect(header().string("X-Total-Count", "25"))
+                .andExpect(header().string(
+                                "Link",
+                                "<http://localhost/order?page=0&size=10>; rel=\"first\", "
+                                        + "<http://localhost/order?page=0&size=10>; rel=\"prev\", "
+                                        + "<http://localhost/order?page=2&size=10>; rel=\"next\", "
+                                        + "<http://localhost/order?page=2&size=10>; rel=\"last\""));
+
+        verify(orderService).findAll(PageRequest.of(1, 10, Sort.by("id")));
+    }
+
+    @Test
+    void getAllOrdersClampsSizeToOneHundred() throws Exception {
+        when(orderService.findAll(any())).thenReturn(Page.empty());
+
+        mockMvc.perform(get("/order").param("size", "101")).andExpect(status().isOk());
+
+        verify(orderService).findAll(PageRequest.of(0, 100, Sort.by("id")));
+    }
+
+    @Test
+    void getAllOrdersWithNegativePageReturns400() throws Exception {
+        mockMvc.perform(get("/order").param("page", "-1"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.errors[0].field").value("page"));
+
+        verify(orderService, never()).findAll(any());
+    }
+
+    @Test
+    void getAllOrdersWithNegativeSizeReturns400() throws Exception {
+        mockMvc.perform(get("/order").param("size", "-5"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].field").value("size"));
+
+        verify(orderService, never()).findAll(any());
     }
 
     @Test

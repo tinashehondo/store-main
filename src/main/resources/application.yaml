@@ -3,13 +3,41 @@ spring:
     url: ${DB_URL:jdbc:postgresql://localhost:5433/store}
     username: ${DB_USERNAME:admin}
     password: ${DB_PASSWORD:admin}
+    hikari:
+      # Fixed-size pool (minimum-idle = maximum-pool-size), as HikariCP recommends: with a remote database, opening a
+      # connection costs several round trips (TCP, TLS, auth), so it must never happen on the request path.
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:10}
+      minimum-idle: ${DB_POOL_MIN_IDLE:10}
+      # Fail fast when the pool is exhausted instead of queueing requests for HikariCP's default 30s.
+      connection-timeout: ${DB_CONNECTION_TIMEOUT_MS:5000}
+      # Recycle connections before network devices between app and database silently drop idle ones.
+      max-lifetime: ${DB_MAX_LIFETIME_MS:1800000}
+      keepalive-time: ${DB_KEEPALIVE_TIME_MS:120000}
+      data-source-properties:
+        # Rewrites JDBC batches into multi-row INSERTs: one round trip per batch rather than per row. Set here rather
+        # than in the URL so that it survives a DB_URL override.
+        reWriteBatchedInserts: true
   jpa:
     open-in-view: false
     hibernate:
       ddl-auto: validate
     properties:
       hibernate:
-        default_batch_fetch_size: 10
+        # Safety net for any lazy association loaded outside the explicit fetch plans: one query per 100 entities
+        # (the maximum page size) rather than one per entity.
+        default_batch_fetch_size: 100
+        query:
+          # Turn the HHH90003004 warning (collection fetch + pagination, paginated in memory after loading every row)
+          # into an error.
+          fail_on_pagination_over_collection_fetch: true
+          # Pad IN lists to powers of two so that pages of different sizes reuse a few SQL strings and execution plans.
+          in_clause_parameter_padding: true
   liquibase:
     change-log: classpath:db/changelog/db.changelog-master.yaml
     contexts: ${LIQUIBASE_CONTEXTS:demo}
+
+server:
+  compression:
+    enabled: true
+    min-response-size: 1KB
+    mime-types: application/json,application/problem+json

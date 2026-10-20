@@ -9,6 +9,10 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -35,8 +39,10 @@ class CustomerControllerTests {
     private CustomerService customerService;
 
     @Test
-    void getAllCustomersReturnsCustomersWithTheirOrders() throws Exception {
-        when(customerService.findAll()).thenReturn(List.of(customer(1L, "John Doe", order(7L, "Test Order"))));
+    void getAllCustomersReturnsPlainArrayWithPagingHeaders() throws Exception {
+        when(customerService.findAll(any()))
+                .thenReturn(new PageImpl<>(
+                        List.of(customer(1L, "John Doe", order(7L, "Test Order"))), Pagination.pageRequest(0, 20), 41));
 
         mockMvc.perform(get("/customer"))
                 .andExpect(status().isOk())
@@ -44,7 +50,61 @@ class CustomerControllerTests {
                 .andExpect(jsonPath("$[0].id").value(1))
                 .andExpect(jsonPath("$[0].name").value("John Doe"))
                 .andExpect(jsonPath("$[0].orders[0].id").value(7))
-                .andExpect(jsonPath("$[0].orders[0].description").value("Test Order"));
+                .andExpect(jsonPath("$[0].orders[0].description").value("Test Order"))
+                .andExpect(header().string("X-Total-Count", "41"))
+                .andExpect(header().string(
+                                "Link",
+                                "<http://localhost/customer?page=0&size=20>; rel=\"first\", "
+                                        + "<http://localhost/customer?page=1&size=20>; rel=\"next\", "
+                                        + "<http://localhost/customer?page=2&size=20>; rel=\"last\""));
+    }
+
+    @Test
+    void getAllCustomersDefaultsToFirstPageOfTwentyOrderedById() throws Exception {
+        when(customerService.findAll(any())).thenReturn(Page.empty());
+
+        mockMvc.perform(get("/customer")).andExpect(status().isOk());
+
+        verify(customerService).findAll(PageRequest.of(0, 20, Sort.by("id")));
+    }
+
+    @Test
+    void getAllCustomersClampsSizeToOneHundred() throws Exception {
+        when(customerService.findAll(any())).thenReturn(Page.empty());
+
+        mockMvc.perform(get("/customer").param("page", "2").param("size", "500"))
+                .andExpect(status().isOk());
+
+        verify(customerService).findAll(PageRequest.of(2, 100, Sort.by("id")));
+    }
+
+    @Test
+    void getAllCustomersWithNegativePageReturns400() throws Exception {
+        mockMvc.perform(get("/customer").param("page", "-1"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.errors[0].field").value("page"));
+
+        verify(customerService, never()).findAll(any());
+    }
+
+    @Test
+    void getAllCustomersWithZeroSizeReturns400() throws Exception {
+        mockMvc.perform(get("/customer").param("size", "0"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].field").value("size"));
+
+        verify(customerService, never()).findAll(any());
+    }
+
+    @Test
+    void getAllCustomersWithNonNumericPageReturns400() throws Exception {
+        mockMvc.perform(get("/customer").param("page", "abc"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON));
+
+        verify(customerService, never()).findAll(any());
     }
 
     @Test
@@ -132,7 +192,7 @@ class CustomerControllerTests {
 
     @Test
     void unexpectedExceptionReturnsGeneric500() throws Exception {
-        when(customerService.findAll()).thenThrow(new IllegalStateException("secret internals"));
+        when(customerService.findAll(any())).thenThrow(new IllegalStateException("secret internals"));
 
         mockMvc.perform(get("/customer"))
                 .andExpect(status().isInternalServerError())
