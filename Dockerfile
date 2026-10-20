@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # ---- Build stage ---------------------------------------------------------------------------------------------------
-FROM eclipse-temurin:17.0.20.1_1-jdk-jammy AS build
+FROM eclipse-temurin:22.0.2_9-jdk-jammy AS build
 WORKDIR /workspace
 
 # Wrapper and build scripts first: the Gradle distribution and the dependencies are downloaded in their own layer,
@@ -21,7 +21,7 @@ RUN ./gradlew --no-daemon bootJar -x test \
 # JRE only (no compiler, smaller attack surface). Ubuntu Jammy rather than Alpine: Temurin publishes its Alpine JRE for
 # amd64 only, so it would not run natively on arm64 (Apple Silicon, Graviton), and glibc is the platform the JDK is
 # primarily built and tested on. The cost is roughly 40 MB of image size.
-FROM eclipse-temurin:17.0.20.1_1-jre-jammy
+FROM eclipse-temurin:22.0.2_9-jre-jammy
 
 RUN groupadd --system --gid 10001 app \
     && useradd --system --uid 10001 --gid app --no-create-home --shell /usr/sbin/nologin app
