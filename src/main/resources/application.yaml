@@ -26,6 +26,10 @@ spring:
         # Safety net for any lazy association loaded outside the explicit fetch plans: one query per 100 entities
         # (the maximum page size) rather than one per entity.
         default_batch_fetch_size: 100
+        jdbc:
+          # Groups inserts that have no generated id, i.e. the order_product rows of a new order, into JDBC batches;
+          # with reWriteBatchedInserts each batch is one round trip. Entities using IDENTITY are never batched.
+          batch_size: 50
         query:
           # Turn the HHH90003004 warning (collection fetch + pagination, paginated in memory after loading every row)
           # into an error.

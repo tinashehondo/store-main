@@ -131,7 +131,8 @@ Bitmap Heap Scan on "order"  (actual time=0.091..0.444 rows=1941 loops=1)
 
 **Note, not changed: `GenerationType.IDENTITY` disables JDBC insert batching.** Hibernate must execute each INSERT
 immediately to read back the generated id, so `reWriteBatchedInserts` and `hibernate.jdbc.batch_size` have no effect on
-our entities today. It does not matter for the current endpoints (one insert per POST). Bulk imports would need a pooled
+our entities today. (Since Phase 3, `batch_size` does batch the `order_product` join rows, which have no generated id;
+see "Products added in Phase 3".) It does not matter for the current endpoints (one entity insert per POST). Bulk imports would need a pooled
 sequence (`@SequenceGenerator(allocationSize = 50)` with a matching `INCREMENT BY 50` on the sequence). That gives one
 `nextval` per 50 rows and then real batched inserts. It is a schema plus entity change with a migration to plan, see
 "Considered but not done".
@@ -262,6 +263,80 @@ How to read this:
 one of the words in their name". The only difference is that a term containing a space (`"el Do"`) can match across a
 word boundary ("Muri**el Do**nnelly").
 
+## Products added in Phase 3
+
+Products are linked to orders many-to-many through `order_product(order_id, product_id)` (`db.changelog-6.yaml`).
+`Order` owns a lazy `@ManyToMany Set<Product> products`, which is only used to write the join rows. `Product` does not
+map its orders at all: a popular product can be in thousands of orders, and the API only needs their ids.
+
+### Indexes
+
+| Index | Serves |
+|-------|--------|
+| `PRIMARY KEY (order_id, product_id)` | "products of these orders" (`GET /order`, `GET /order/{id}`): `order_id` is the leading column. |
+| `idx_order_product_product_id (product_id, order_id)` | "orders containing these products" (`GET /products`, `GET /products/{id}`), and the FK check when a product is deleted. |
+
+The second index includes `order_id` (the spec asked for `product_id` alone). The order-ids query filters on
+`product_id` and returns `order_id` sorted. With both columns in the index, it is an **index-only scan that is already
+in the right order**: no sort and no heap access once the table is vacuumed. On a two-column table that costs nothing
+extra.
+
+Measured on a scratch PostgreSQL 16.2 with 200,000 orders, 1,000 products and 600,000 join rows (`VACUUM ANALYZE`d),
+for one page of 20 products and one page of 20 orders:
+
+```
+-- Order ids of 20 products (12,000 rows): no Sort node, no heap access.
+Index Only Scan using idx_order_product_product_id on order_product  (actual time=0.041..1.676 rows=12000 loops=1)
+  Index Cond: (product_id = ANY ('{1,...,20}'::bigint[]))
+  Heap Fetches: 0
+Execution Time: 2.178 ms
+
+-- Products of 20 orders (60 rows): the primary key finds the join rows; product is small enough to hash.
+Sort  ->  Hash Join  ->  Index Only Scan using order_product_pkey on order_product op
+                             Index Cond: (order_id = ANY ('{101,...,120}'::bigint[]))
+Execution Time: 0.309 ms
+```
+
+Both indexes are built with a plain `CREATE INDEX` in the same transaction as `CREATE TABLE`. The table is new and
+empty, so there is nothing for `CONCURRENTLY` to protect.
+
+### Fetch plans
+
+Every read is the same "page, then one `IN` query, grouped in Java" pattern as `/customer`. The lazy `Order.products`
+collection is never initialised on a read path; the mapper has no single-argument `orderToOrderDTO` that could touch
+it. The join-table queries are native SQL because JPQL could only reach `order_product` through `Order.products`, which
+adds a join on `"order"` that nothing needs.
+
+| Request | Statements | SQL |
+|---------|-----------:|-----|
+| `GET /order` (any page size) | **3** (was 2) | the page with customer join-fetched, the count, then `SELECT op.order_id, p.id, p.description FROM order_product op JOIN product p ON p.id = op.product_id WHERE op.order_id IN (…) ORDER BY op.order_id, op.product_id` |
+| `GET /order/{id}` | **2** (was 1) | the order with its customer, then the same products query for one id |
+| `GET /products` (any page size) | **3** | `SELECT p.id, p.description FROM product p ORDER BY p.id OFFSET … LIMIT …`, the count, then `SELECT product_id, order_id FROM order_product WHERE product_id IN (…) ORDER BY product_id, order_id` |
+| `GET /products/{id}` | **2** | `findById`, then the order-ids query for one id |
+| `POST /order` with N products | **4** | the customer, all N products in one `findAllById` (`IN`), the order `INSERT`, and one JDBC batch for the N `order_product` rows |
+
+Join-fetching `products` together with a `Pageable` was ruled out for the same reason as for customers (HHH90003004, now
+an error through `fail_on_pagination_over_collection_fetch`). Empty pages skip the `IN` query.
+
+**Batched join-table inserts.** `hibernate.jdbc.batch_size: 50` is now set. `IDENTITY` entities still insert one at a
+time (see above), but join rows have no generated id. Hibernate sends them as one JDBC batch, which
+`reWriteBatchedInserts` turns into a single multi-row `INSERT`: one round trip for up to 50 products rather than one per
+product. `productIds` is capped at 100 per order, which also bounds the `IN` list of the product lookup.
+
+The integration tests assert all of these counts, with `collectionFetches == 0` on every read
+(`ProductIntegrationTest`, `OrderIntegrationTest`).
+
+### Residual risk: unbounded order ids per product
+
+`GET /products` and `GET /products/{id}` return the ids of **every** order that contains each product, because that is
+what the task asks for. The statement count stays constant, but the payload does not: a product in 1,000,000 orders
+returns 1,000,000 ids (~8 MB of JSON), and a page of 100 popular products multiplies that. This is the same shape of
+problem as the customers' embedded orders below.
+
+The recommended follow-up is a paginated `GET /products/{id}/orders` (the same `Pagination` contract, served by
+`idx_order_product_product_id` as a keyset- or offset-paged index-only scan). The embedded list could then be capped,
+or replaced by an order count. Both are contract changes, so neither is done here.
+
 ## Considered but deliberately not done
 
 | Option | Why not (now) |
@@ -277,6 +352,8 @@ word boundary ("Muri**el Do**nnelly").
 
 ## Known residual risk
 
+The same applies to the order ids embedded in `/products` (see "Residual risk: unbounded order ids per product").
+
 `GET /customer` still embeds **all** orders of each customer on the page. The number of statements is bounded (3), but
 the **rows and bytes are not**: with the seed data a full page of 100 customers is still 10,100 entities and ~500 KB of
 JSON (75 KB gzipped). A single customer with 100,000 orders would make even a page of one customer arbitrarily large.
@@ -291,7 +368,7 @@ Pagination limits the number of customers, not the size of each one. The recomme
 
 1. **Count statements per request.** Temporarily set `spring.jpa.properties.hibernate.generate_statistics=true` (or
    `logging.level.org.hibernate.stat=DEBUG` for a per-session summary) on one instance. Expect 3 statements for
-   `/customer` (with or without `name`), 2 for `/order` and 1 for `/order/{id}`. Turn it off afterwards; statistics
+   `/customer` (with or without `name`), `/order` and `/products`, and 2 for `/order/{id}` and `/products/{id}`. Turn it off afterwards; statistics
    have a cost.
 2. **Watch the pool** through the Hikari metrics (`hikaricp.connections.pending`, `.acquire`, `.usage`, `.timeout`) once
    Actuator/Micrometer is wired in. Pending connections or timeouts mean the pool is too small or queries are slow.
@@ -310,6 +387,10 @@ Pagination limits the number of customers, not the size of each one. The recomme
 
    -- The X-Total-Count query.
    EXPLAIN (ANALYZE, BUFFERS) SELECT count(*) FROM "order";
+
+   -- Order ids of a page of products: expect an Index Only Scan on idx_order_product_product_id, with no Sort.
+   EXPLAIN (ANALYZE, BUFFERS)
+   SELECT product_id, order_id FROM order_product WHERE product_id IN (1, 2, 3) ORDER BY product_id, order_id;
 
    -- Customer search: expect a Bitmap Index Scan on idx_customer_name_trgm for selective terms of 3+ characters.
    EXPLAIN (ANALYZE, BUFFERS)

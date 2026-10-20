@@ -51,6 +51,27 @@ class SchemaIntegrationTest extends AbstractIntegrationTest {
         assertThat(valid).isTrue();
     }
 
+    @Test
+    void orderProductHasCompositePrimaryKeyAndProductIdIndex() {
+        String primaryKey = jdbcTemplate.queryForObject(
+                """
+                SELECT pg_get_constraintdef(oid) FROM pg_constraint
+                WHERE conrelid = 'order_product'::regclass AND contype = 'p'
+                """,
+                String.class);
+        String index = jdbcTemplate.queryForObject(
+                """
+                SELECT pg_get_indexdef(i.indexrelid)
+                FROM pg_index i
+                JOIN pg_class c ON c.oid = i.indexrelid
+                WHERE c.relname = 'idx_order_product_product_id' AND i.indisvalid
+                """,
+                String.class);
+
+        assertThat(primaryKey).isEqualTo("PRIMARY KEY (order_id, product_id)");
+        assertThat(index).endsWith("ON public.order_product USING btree (product_id, order_id)");
+    }
+
     /**
      * The trigram index is usable for the search predicate exactly as CustomerRepository#findByNameLike writes it:
      * lower(name) on the left, an escaped pattern with a leading wildcard on the right. If the index expression and the

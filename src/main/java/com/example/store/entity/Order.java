@@ -5,6 +5,9 @@ import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
 
+import java.util.HashSet;
+import java.util.Set;
+
 @Entity
 @Getter
 @Setter
@@ -20,6 +23,15 @@ public class Order {
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "customer_id", nullable = false)
     private Customer customer;
+
+    // Written when an order is created; read paths load products of a whole page with one query instead (see
+    // OrderService), so this lazy collection is never initialised there.
+    @ManyToMany(fetch = FetchType.LAZY)
+    @JoinTable(
+            name = "order_product",
+            joinColumns = @JoinColumn(name = "order_id"),
+            inverseJoinColumns = @JoinColumn(name = "product_id"))
+    private Set<Product> products = new HashSet<>();
 
     // See Customer#equals for the rationale.
     @Override

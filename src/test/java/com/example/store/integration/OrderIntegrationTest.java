@@ -1,6 +1,8 @@
 package com.example.store.integration;
 
+import com.example.store.entity.Product;
 import com.example.store.repository.OrderRepository;
+import com.example.store.repository.ProductRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -9,10 +11,12 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.web.servlet.MvcResult;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.StreamSupport;
@@ -32,29 +36,84 @@ class OrderIntegrationTest extends AbstractIntegrationTest {
     @Autowired
     private OrderRepository orderRepository;
 
-    @Test
-    void createOrderOnSeededDatabaseResolvesCustomerAndGetsIdAfterSeedData() throws Exception {
-        String response = mockMvc.perform(post("/order")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"description\":\"Integration Order\",\"customerId\":58}"))
-                .andExpect(status().isCreated())
-                .andReturn()
-                .getResponse()
-                .getContentAsString();
+    @Autowired
+    private ProductRepository productRepository;
 
-        JsonNode created = objectMapper.readTree(response);
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
+    @Test
+    void createOrderOnSeededDatabaseResolvesCustomerAndProductsAndGetsIdAfterSeedData() throws Exception {
+        Product gadget = saveProduct("Gadget");
+        Product widget = saveProduct("Widget");
+
+        // Listed out of order and with a duplicate: the response has each product once, sorted by id.
+        JsonNode created = createOrder(58L, widget.getId(), gadget.getId(), widget.getId());
+
         // The seed data uses ids 1..10000; anything else means the sequence was not advanced.
         assertThat(created.get("id").asLong()).isGreaterThan(10_000L);
+        assertThat(fieldNames(created)).containsExactlyInAnyOrder("id", "description", "customer", "products");
         assertThat(created.get("description").asText()).isEqualTo("Integration Order");
         assertThat(created.get("customer").get("id").asLong()).isEqualTo(58L);
         assertThat(created.get("customer").get("name").asText()).isEqualTo("Heidi Becker");
+        assertThat(ids(created.get("products"))).containsExactly(gadget.getId(), widget.getId());
+        assertThat(fieldNames(created.get("products").get(0))).containsExactlyInAnyOrder("id", "description");
+        assertThat(created.get("products").get(0).get("description").asText()).isEqualTo("Gadget");
+        assertThat(jdbcTemplate.queryForList(
+                        "SELECT product_id FROM order_product WHERE order_id = ? ORDER BY product_id",
+                        Long.class,
+                        created.get("id").asLong()))
+                .containsExactly(gadget.getId(), widget.getId());
+    }
+
+    @Test
+    void createOrderBatchesTheJoinTableInserts() throws Exception {
+        Long[] productIds = {
+            saveProduct("A").getId(),
+            saveProduct("B").getId(),
+            saveProduct("C").getId(),
+            saveProduct("D").getId()
+        };
+
+        SqlStatementCounter.Result sql = sqlStatementCounter().measure(() -> createOrder(58L, productIds));
+
+        // Customer + all products in one IN query + the order INSERT (IDENTITY, not batchable) + one JDBC batch for
+        // the four order_product rows, rather than one INSERT each.
+        assertThat(sql.statements()).isEqualTo(4);
+    }
+
+    @Test
+    void createOrderWithUnknownProductsReturns422ListingThemAndPersistsNothing() throws Exception {
+        Long known = saveProduct("Known").getId();
+        long ordersBefore = orderRepository.count();
+
+        mockMvc.perform(post("/order")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"description\":\"Integration Order\",\"customerId\":58,\"productIds\":[" + known
+                                + ",999999999,999999998]}"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.status").value(422))
+                .andExpect(jsonPath("$.detail").value("Product ids [999999998, 999999999] do not exist"));
+
+        assertThat(orderRepository.count()).isEqualTo(ordersBefore);
+    }
+
+    @Test
+    void createOrderWithoutProductsReturns400() throws Exception {
+        mockMvc.perform(post("/order")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"description\":\"Integration Order\",\"customerId\":58,\"productIds\":[]}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.errors[0].field").value("productIds"));
     }
 
     @Test
     void createOrderWithUnknownCustomerReturns422() throws Exception {
         mockMvc.perform(post("/order")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"description\":\"Integration Order\",\"customerId\":999999}"))
+                        .content("{\"description\":\"Integration Order\",\"customerId\":999999,\"productIds\":[1]}"))
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.status").value(422))
@@ -62,7 +121,7 @@ class OrderIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void getOrdersKeepsTheExistingJsonShape() throws Exception {
+    void getOrdersKeepsTheExistingJsonShapeAndLegacyOrdersHaveNoProducts() throws Exception {
         // Ids 9901..10000 of the seed data; orders created by other tests have higher ids.
         JsonNode orders =
                 readArray(mockMvc.perform(get("/order").param("page", "99").param("size", "100"))
@@ -74,8 +133,10 @@ class OrderIntegrationTest extends AbstractIntegrationTest {
                 .filter(node -> node.get("id").asLong() == 10_000L)
                 .findFirst()
                 .orElseThrow();
-        assertThat(fieldNames(order)).containsExactlyInAnyOrder("id", "description", "customer");
+        assertThat(fieldNames(order)).containsExactlyInAnyOrder("id", "description", "customer", "products");
         assertThat(order.get("description").asText()).isEqualTo("Bespoke Frozen Gloves");
+        assertThat(order.get("products").isArray()).isTrue();
+        assertThat(order.get("products")).isEmpty();
 
         JsonNode customer = order.get("customer");
         assertThat(fieldNames(customer)).containsExactlyInAnyOrder("id", "name");
@@ -84,14 +145,15 @@ class OrderIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void getOrderByIdReturnsTheListShapeWithItsCustomer() throws Exception {
+    void getOrderByIdOfLegacyOrderReturnsTheListShapeWithItsCustomerAndNoProducts() throws Exception {
         JsonNode order = objectMapper.readTree(mockMvc.perform(get("/order/10000"))
                 .andExpect(status().isOk())
                 .andReturn()
                 .getResponse()
                 .getContentAsString());
 
-        assertThat(fieldNames(order)).containsExactlyInAnyOrder("id", "description", "customer");
+        assertThat(fieldNames(order)).containsExactlyInAnyOrder("id", "description", "customer", "products");
+        assertThat(order.get("products")).isEmpty();
         assertThat(order.get("id").asLong()).isEqualTo(10_000L);
         assertThat(order.get("description").asText()).isEqualTo("Bespoke Frozen Gloves");
         assertThat(fieldNames(order.get("customer"))).containsExactlyInAnyOrder("id", "name");
@@ -100,13 +162,37 @@ class OrderIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
-    void getOrderByIdUsesExactlyOneStatement() throws Exception {
-        SqlStatementCounter.Result sql = sqlStatementCounter()
-                .measure(() -> mockMvc.perform(get("/order/158")).andExpect(status().isOk()));
+    void getOrderByIdReturnsItsProducts() throws Exception {
+        Product widget = saveProduct("Widget");
+        Product gadget = saveProduct("Gadget");
+        long orderId =
+                createOrder(58L, gadget.getId(), widget.getId()).get("id").asLong();
 
-        // The order with its customer join-fetched; no second query for the lazy customer.
-        assertThat(sql.statements()).isEqualTo(1);
+        JsonNode order = objectMapper.readTree(mockMvc.perform(get("/order/{id}", orderId))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
+
+        assertThat(order.get("customer").get("name").asText()).isEqualTo("Heidi Becker");
+        assertThat(ids(order.get("products"))).containsExactly(widget.getId(), gadget.getId());
+        assertThat(order.get("products").get(0).get("description").asText()).isEqualTo("Widget");
+    }
+
+    @Test
+    void getOrderByIdUsesAtMostTwoStatements() throws Exception {
+        long orderId = createOrder(
+                        58L, saveProduct("A").getId(), saveProduct("B").getId())
+                .get("id")
+                .asLong();
+
+        SqlStatementCounter.Result sql = sqlStatementCounter()
+                .measure(() -> mockMvc.perform(get("/order/{id}", orderId)).andExpect(status().isOk()));
+
+        // The order with its customer join-fetched, then its products; the lazy collection is never initialised.
+        assertThat(sql.statements()).isLessThanOrEqualTo(2);
         assertThat(sql.entitiesLoaded()).isEqualTo(2);
+        assertThat(sql.collectionFetches()).isZero();
     }
 
     @Test
@@ -128,7 +214,7 @@ class OrderIntegrationTest extends AbstractIntegrationTest {
 
     @ParameterizedTest
     @ValueSource(ints = {1, 20, 100})
-    void getOrdersUsesAtMostTwoStatementsWhateverThePageSize(int size) throws Exception {
+    void getOrdersUsesAtMostThreeStatementsWhateverThePageSize(int size) throws Exception {
         MvcResult[] result = new MvcResult[1];
 
         SqlStatementCounter.Result sql = sqlStatementCounter()
@@ -136,11 +222,45 @@ class OrderIntegrationTest extends AbstractIntegrationTest {
                         .andExpect(status().isOk())
                         .andReturn());
 
-        // Page of orders with customers join-fetched + count; no per-customer (batch) loading.
-        assertThat(sql.statements()).isLessThanOrEqualTo(2);
+        // Page of orders with customers join-fetched + count + one IN query for all their products; no per-customer
+        // (batch) loading and no lazy collection initialisation.
+        assertThat(sql.statements()).isLessThanOrEqualTo(3);
+        assertThat(sql.collectionFetches()).isZero();
         JsonNode orders = readArray(result[0].getResponse());
         assertThat(orders).hasSize(size);
         assertThat(orders.get(0).get("customer").get("name").asText()).isNotBlank();
+        assertThat(orders.get(0).get("products").isArray()).isTrue();
+    }
+
+    @Test
+    void getOrdersPageWithOrdersThatHaveProductsLoadsThemInAtMostThreeStatements() throws Exception {
+        Product widget = saveProduct("Widget");
+        Product gadget = saveProduct("Gadget");
+        long orderId =
+                createOrder(58L, widget.getId(), gadget.getId()).get("id").asLong();
+        // The page that contains it (ids may have gaps, so count rather than divide the id).
+        Long before = jdbcTemplate.queryForObject("SELECT count(*) FROM \"order\" WHERE id < ?", Long.class, orderId);
+        long page = before / 100;
+        MvcResult[] result = new MvcResult[1];
+
+        SqlStatementCounter.Result sql = sqlStatementCounter()
+                .measure(() -> result[0] = mockMvc.perform(get("/order")
+                                .param("page", String.valueOf(page))
+                                .param("size", "100"))
+                        .andExpect(status().isOk())
+                        .andReturn());
+
+        assertThat(sql.statements()).isLessThanOrEqualTo(3);
+        assertThat(sql.collectionFetches()).isZero();
+        JsonNode orders = readArray(result[0].getResponse());
+        JsonNode order = StreamSupport.stream(orders.spliterator(), false)
+                .filter(node -> node.get("id").asLong() == orderId)
+                .findFirst()
+                .orElseThrow();
+        assertThat(ids(order.get("products"))).containsExactly(widget.getId(), gadget.getId());
+        // The rest of the page (legacy orders, or orders of other tests) still has a products array.
+        assertThat(orders)
+                .allSatisfy(node -> assertThat(node.get("products").isArray()).isTrue());
     }
 
     @Test
@@ -230,6 +350,25 @@ class OrderIntegrationTest extends AbstractIntegrationTest {
         mockMvc.perform(get("/order").param("size", "0"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errors[0].field").value("size"));
+    }
+
+    private Product saveProduct(String description) {
+        Product product = new Product();
+        product.setDescription(description);
+        return productRepository.save(product);
+    }
+
+    private JsonNode createOrder(long customerId, Long... productIds) throws Exception {
+        String ids =
+                String.join(",", Arrays.stream(productIds).map(String::valueOf).toList());
+        return objectMapper.readTree(mockMvc.perform(post("/order")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"description\":\"Integration Order\",\"customerId\":" + customerId
+                                + ",\"productIds\":[" + ids + "]}"))
+                .andExpect(status().isCreated())
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
     }
 
     private JsonNode readArray(MockHttpServletResponse response) throws Exception {

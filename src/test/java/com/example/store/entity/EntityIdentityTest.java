@@ -41,6 +41,32 @@ class EntityIdentityTest {
     void transientEntitiesAreNeverEqualToEachOther() {
         assertThat(new Order()).isNotEqualTo(new Order());
         assertThat(new Customer()).isNotEqualTo(new Customer());
+        assertThat(new Product()).isNotEqualTo(new Product());
+    }
+
+    @Test
+    void productToStringHashCodeAndEqualityFollowTheSameConventions() {
+        Product product = new Product();
+        product.setId(3L);
+        product.setDescription("Widget");
+        Product sameId = new Product();
+        sameId.setId(3L);
+
+        assertThat(product.toString()).isEqualTo("Product(id=3, description=Widget)");
+        assertThat(product.hashCode()).isEqualTo(Product.class.hashCode());
+        assertThat(product).isEqualTo(sameId);
+    }
+
+    @Test
+    void orderToStringDoesNotIncludeProducts() {
+        Product product = new Product();
+        product.setId(3L);
+        Order order = new Order();
+        order.setId(2L);
+        order.setDescription("Test Order");
+        order.getProducts().add(product);
+
+        assertThat(order.toString()).isEqualTo("Order(id=2, description=Test Order)");
     }
 
     @Test
@@ -61,6 +87,10 @@ class EntityIdentityTest {
         Order order = new Order();
         order.setId(1L);
 
+        Product product = new Product();
+        product.setId(1L);
+
         assertThat(customer).isNotEqualTo(order);
+        assertThat(order).isNotEqualTo(product);
     }
 }

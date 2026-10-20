@@ -1,0 +1,33 @@
+databaseChangeLog:
+  - changeSet:
+      id: 6-products
+      author: store-team
+      comment: >-
+        Products and the many-to-many link between orders and products. No quantity column and no backfill: the
+        legacy orders simply have no products. The primary key (order_id, product_id) serves "products of these
+        orders" through its leading column; idx_order_product_product_id serves "orders containing these products",
+        and including order_id makes that lookup an ordered, index-only scan. A plain CREATE INDEX (not CONCURRENTLY):
+        the table is created empty in this same transaction, so there are no writes to block.
+      changes:
+        - sql:
+            sql: >-
+              CREATE TABLE product (
+                id BIGSERIAL PRIMARY KEY,
+                description VARCHAR(255) NOT NULL
+              )
+        - sql:
+            sql: >-
+              CREATE TABLE order_product (
+                order_id BIGINT NOT NULL,
+                product_id BIGINT NOT NULL,
+                CONSTRAINT pk_order_product PRIMARY KEY (order_id, product_id),
+                CONSTRAINT fk_order_product_order FOREIGN KEY (order_id) REFERENCES "order" (id),
+                CONSTRAINT fk_order_product_product FOREIGN KEY (product_id) REFERENCES product (id)
+              )
+        - sql:
+            sql: CREATE INDEX idx_order_product_product_id ON order_product (product_id, order_id)
+      rollback:
+        - sql:
+            sql: DROP TABLE order_product
+        - sql:
+            sql: DROP TABLE product

@@ -3,6 +3,7 @@ package com.example.store.controller;
 import com.example.store.dto.CreateOrderRequest;
 import com.example.store.dto.OrderCustomerDTO;
 import com.example.store.dto.OrderDTO;
+import com.example.store.dto.OrderProductDTO;
 import com.example.store.exception.ReferencedResourceNotFoundException;
 import com.example.store.exception.ResourceNotFoundException;
 import com.example.store.service.OrderService;
@@ -21,8 +22,12 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.List;
+import java.util.Set;
+import java.util.stream.LongStream;
 
 import static org.hamcrest.Matchers.containsInAnyOrder;
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.hasSize;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
@@ -53,6 +58,8 @@ class OrderControllerTests {
                 .andExpect(jsonPath("$[0].description").value("Test Order"))
                 .andExpect(jsonPath("$[0].customer.id").value(1))
                 .andExpect(jsonPath("$[0].customer.name").value("John Doe"))
+                .andExpect(jsonPath("$[0].products[0].id").value(3))
+                .andExpect(jsonPath("$[0].products[0].description").value("Widget"))
                 .andExpect(header().string("X-Total-Count", "25"))
                 .andExpect(header().string(
                                 "Link",
@@ -93,7 +100,7 @@ class OrderControllerTests {
     }
 
     @Test
-    void getOrderByIdReturnsOrderWithItsCustomer() throws Exception {
+    void getOrderByIdReturnsOrderWithItsCustomerAndProducts() throws Exception {
         when(orderService.findById(11L)).thenReturn(order(11L, "Test Order", 1L, "John Doe"));
 
         mockMvc.perform(get("/order/11"))
@@ -102,7 +109,9 @@ class OrderControllerTests {
                 .andExpect(jsonPath("$.id").value(11))
                 .andExpect(jsonPath("$.description").value("Test Order"))
                 .andExpect(jsonPath("$.customer.id").value(1))
-                .andExpect(jsonPath("$.customer.name").value("John Doe"));
+                .andExpect(jsonPath("$.customer.name").value("John Doe"))
+                .andExpect(jsonPath("$.products", hasSize(1)))
+                .andExpect(jsonPath("$.products[0].id").value(3));
     }
 
     @Test
@@ -128,18 +137,83 @@ class OrderControllerTests {
     }
 
     @Test
-    void createOrderReturns201WithResolvedCustomer() throws Exception {
-        when(orderService.create(new CreateOrderRequest("Test Order", 1L)))
+    void createOrderReturns201WithResolvedCustomerAndProducts() throws Exception {
+        when(orderService.create(new CreateOrderRequest("Test Order", 1L, Set.of(3L))))
                 .thenReturn(order(10001L, "Test Order", 1L, "John Doe"));
 
         mockMvc.perform(post("/order")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"description\":\"Test Order\",\"customerId\":1}"))
+                        .content("{\"description\":\"Test Order\",\"customerId\":1,\"productIds\":[3]}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.id").value(10001))
                 .andExpect(jsonPath("$.description").value("Test Order"))
                 .andExpect(jsonPath("$.customer.id").value(1))
-                .andExpect(jsonPath("$.customer.name").value("John Doe"));
+                .andExpect(jsonPath("$.customer.name").value("John Doe"))
+                .andExpect(jsonPath("$.products[0].id").value(3))
+                .andExpect(jsonPath("$.products[0].description").value("Widget"));
+    }
+
+    @Test
+    void createOrderCollapsesDuplicateProductIds() throws Exception {
+        when(orderService.create(any())).thenReturn(order(10001L, "Test Order", 1L, "John Doe"));
+
+        mockMvc.perform(post("/order")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"description\":\"Test Order\",\"customerId\":1,\"productIds\":[3,3,4]}"))
+                .andExpect(status().isCreated());
+
+        verify(orderService).create(new CreateOrderRequest("Test Order", 1L, Set.of(3L, 4L)));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"", ",\"productIds\":null", ",\"productIds\":[]"})
+    void createOrderWithoutProductsReturns400(String productIds) throws Exception {
+        mockMvc.perform(post("/order")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"description\":\"Test Order\",\"customerId\":1" + productIds + "}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.errors[0].field").value("productIds"));
+
+        verify(orderService, never()).create(any());
+    }
+
+    @Test
+    void createOrderWithNullProductIdReturns400() throws Exception {
+        mockMvc.perform(post("/order")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"description\":\"Test Order\",\"customerId\":1,\"productIds\":[3,null]}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].field").value(containsString("productIds")));
+
+        verify(orderService, never()).create(any());
+    }
+
+    @Test
+    void createOrderWithMoreThanOneHundredProductsReturns400() throws Exception {
+        String ids = String.join(
+                ",", LongStream.rangeClosed(1, 101).mapToObj(String::valueOf).toList());
+
+        mockMvc.perform(post("/order")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"description\":\"Test Order\",\"customerId\":1,\"productIds\":[" + ids + "]}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].field").value("productIds"));
+
+        verify(orderService, never()).create(any());
+    }
+
+    @Test
+    void createOrderWithUnknownProductsReturns422ListingThem() throws Exception {
+        when(orderService.create(any())).thenThrow(new ReferencedResourceNotFoundException("Product", List.of(7L, 9L)));
+
+        mockMvc.perform(post("/order")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"description\":\"Test Order\",\"customerId\":1,\"productIds\":[3,7,9]}"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.status").value(422))
+                .andExpect(jsonPath("$.detail").value("Product ids [7, 9] do not exist"));
     }
 
     @Test
@@ -148,7 +222,7 @@ class OrderControllerTests {
 
         mockMvc.perform(post("/order")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"description\":\"Test Order\",\"customerId\":999}"))
+                        .content("{\"description\":\"Test Order\",\"customerId\":999,\"productIds\":[3]}"))
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.status").value(422))
@@ -160,7 +234,8 @@ class OrderControllerTests {
         mockMvc.perform(post("/order").contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
-                .andExpect(jsonPath("$.errors[*].field", containsInAnyOrder("description", "customerId")));
+                .andExpect(
+                        jsonPath("$.errors[*].field", containsInAnyOrder("description", "customerId", "productIds")));
 
         verify(orderService, never()).create(any());
     }
@@ -170,16 +245,16 @@ class OrderControllerTests {
         // The pre-refactoring contract; customerId is now required instead.
         mockMvc.perform(post("/order")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"description\":\"Test Order\",\"customer\":{\"id\":1}}"))
+                        .content("{\"description\":\"Test Order\",\"customer\":{\"id\":1},\"productIds\":[3]}"))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.errors[0].field").value("customerId"));
+                .andExpect(jsonPath("$.errors[*].field", hasItem("customerId")));
     }
 
     @Test
     void createOrderWithTooLongDescriptionReturns400() throws Exception {
         mockMvc.perform(post("/order")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"description\":\"" + "x".repeat(256) + "\",\"customerId\":1}"))
+                        .content("{\"description\":\"" + "x".repeat(256) + "\",\"customerId\":1,\"productIds\":[3]}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errors[0].field").value("description"));
     }
@@ -215,6 +290,14 @@ class OrderControllerTests {
         dto.setId(id);
         dto.setDescription(description);
         dto.setCustomer(customer);
+        dto.setProducts(List.of(product(3L, "Widget")));
+        return dto;
+    }
+
+    private static OrderProductDTO product(Long id, String description) {
+        OrderProductDTO dto = new OrderProductDTO();
+        dto.setId(id);
+        dto.setDescription(description);
         return dto;
     }
 }

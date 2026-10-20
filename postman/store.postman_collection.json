@@ -50,6 +50,10 @@
       "value": "1"
     },
     {
+      "key": "productId",
+      "value": "1"
+    },
+    {
       "key": "ordersLastPageUrl",
       "value": "http://localhost:8080/order?page=0&size=20"
     }
@@ -452,6 +456,286 @@
       ]
     },
     {
+      "name": "Products",
+      "item": [
+        {
+          "name": "Create product",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/products",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"description\": \"Postman Product\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Stores the new id in the productId collection variable, used by 'Create order'."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', () => pm.response.to.have.status(201));",
+                  "pm.test('product shape is {id, description, orders: []}', () => {",
+                  "    const p = pm.response.json();",
+                  "    pm.expect(Object.keys(p)).to.have.members(['id', 'description', 'orders']);",
+                  "    pm.expect(p.description).to.eql('Postman Product');",
+                  "    pm.expect(p.orders).to.eql([]);",
+                  "});",
+                  "pm.collectionVariables.set('productId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create product (blank description -> 400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/products",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"description\": \"   \"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('RFC 7807 problem+json', () => {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().status).to.eql(400);",
+                  "});",
+                  "pm.test('error reported on description', () => pm.expect(pm.response.json().errors.map(e => e.field)).to.include('description'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get products (default page)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/products",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('body is a plain JSON array', () => pm.expect(pm.response.json()).to.be.an('array'));",
+                  "pm.test('X-Total-Count header is a number', () => pm.expect(Number(pm.response.headers.get('X-Total-Count'))).to.be.at.least(0));",
+                  "pm.test('Link header has first and last', () => {",
+                  "    const links = parseLinks(pm.response.headers.get('Link'));",
+                  "    pm.expect(links).to.have.property('first');",
+                  "    pm.expect(links).to.have.property('last');",
+                  "});",
+                  "pm.test('ordered by id, orders are arrays of ids', () => {",
+                  "    const products = pm.response.json();",
+                  "    const ids = products.map(p => p.id);",
+                  "    pm.expect(ids.length).to.be.at.most(20);",
+                  "    pm.expect(ids).to.eql([...ids].sort((a, b) => a - b));",
+                  "    products.forEach(p => pm.expect(p.orders).to.be.an('array'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get products (size 500 is clamped to 100)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/products?size=500",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products"
+              ],
+              "query": [
+                {
+                  "key": "size",
+                  "value": "500"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('body is a plain JSON array', () => pm.expect(pm.response.json()).to.be.an('array'));",
+                  "pm.test('X-Total-Count header is a number', () => pm.expect(Number(pm.response.headers.get('X-Total-Count'))).to.be.at.least(0));",
+                  "pm.test('Link header has first and last', () => {",
+                  "    const links = parseLinks(pm.response.headers.get('Link'));",
+                  "    pm.expect(links).to.have.property('first');",
+                  "    pm.expect(links).to.have.property('last');",
+                  "});",
+                  "pm.test('links carry the clamped size', () => pm.expect(parseLinks(pm.response.headers.get('Link')).first).to.include('size=100'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get product by id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/products/{{productId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products",
+                "{{productId}}"
+              ]
+            },
+            "description": "Run after 'Create order' to see that order's id in orders."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('product shape is {id, description, orders}', () => {",
+                  "    const p = pm.response.json();",
+                  "    pm.expect(Object.keys(p)).to.have.members(['id', 'description', 'orders']);",
+                  "    pm.expect(p.id).to.eql(Number(pm.collectionVariables.get('productId')));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get product (unknown id -> 404)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/products/999999999",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products",
+                "999999999"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 404', () => pm.response.to.have.status(404));",
+                  "pm.test('RFC 7807 problem+json', () => {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().status).to.eql(404);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get product (non-numeric id -> 400)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/products/abc",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products",
+                "abc"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('RFC 7807 problem+json', () => {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().status).to.eql(400);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
       "name": "Orders",
       "item": [
         {
@@ -489,10 +773,11 @@
                   "    pm.expect(ids.length).to.be.at.most(20);",
                   "    pm.expect(ids).to.eql([...ids].sort((a, b) => a - b));",
                   "});",
-                  "pm.test('order shape is {id, description, customer{id, name}}', () => {",
+                  "pm.test('order shape is {id, description, customer{id, name}, products[]}', () => {",
                   "    const o = pm.response.json()[0];",
-                  "    pm.expect(Object.keys(o)).to.have.members(['id', 'description', 'customer']);",
+                  "    pm.expect(Object.keys(o)).to.have.members(['id', 'description', 'customer', 'products']);",
                   "    pm.expect(Object.keys(o.customer)).to.have.members(['id', 'name']);",
+                  "    pm.expect(o.products).to.be.an('array');",
                   "});",
                   "const links = parseLinks(pm.response.headers.get('Link'));",
                   "pm.collectionVariables.set('ordersLastPageUrl', links.last);"
@@ -730,14 +1015,14 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"description\": \"Postman Order\",\n  \"customerId\": {{customerId}}\n}",
+              "raw": "{\n  \"description\": \"Postman Order\",\n  \"customerId\": {{customerId}},\n  \"productIds\": [{{productId}}]\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
             },
-            "description": "Uses the customerId collection variable (set by 'Create customer'; defaults to 1)."
+            "description": "Uses the customerId and productId collection variables (set by 'Create customer' and 'Create product'; both default to 1, but no product exists until one is created)."
           },
           "event": [
             {
@@ -750,6 +1035,7 @@
                   "    const o = pm.response.json();",
                   "    pm.expect(o.id).to.be.above(10000);",
                   "    pm.expect(o.customer.id).to.eql(Number(pm.collectionVariables.get('customerId')));",
+                  "    pm.expect(o.products.map(p => p.id)).to.eql([Number(pm.collectionVariables.get('productId'))]);",
                   "});"
                 ]
               }
@@ -777,7 +1063,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"description\": \"Postman Order\",\n  \"customerId\": 999999\n}",
+              "raw": "{\n  \"description\": \"Postman Order\",\n  \"customerId\": 999999,\n  \"productIds\": [{{productId}}]\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -796,6 +1082,98 @@
                   "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
                   "    pm.expect(pm.response.json().status).to.eql(422);",
                   "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create order (unknown products -> 422)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/order",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "order"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"description\": \"Postman Order\",\n  \"customerId\": {{customerId}},\n  \"productIds\": [999999998, 999999999]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 422', () => pm.response.to.have.status(422));",
+                  "pm.test('RFC 7807 problem+json', () => {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().status).to.eql(422);",
+                  "});",
+                  "pm.test('lists every missing product id', () => pm.expect(pm.response.json().detail).to.eql('Product ids [999999998, 999999999] do not exist'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create order (empty productIds -> 400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/order",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "order"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"description\": \"Postman Order\",\n  \"customerId\": {{customerId}},\n  \"productIds\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('RFC 7807 problem+json', () => {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().status).to.eql(400);",
+                  "});",
+                  "pm.test('error reported on productIds', () => pm.expect(pm.response.json().errors.map(e => e.field)).to.include('productIds'));"
                 ]
               }
             }
@@ -841,7 +1219,8 @@
                   "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
                   "    pm.expect(pm.response.json().status).to.eql(400);",
                   "});",
-                  "pm.test('error reported on customerId', () => pm.expect(pm.response.json().errors.map(e => e.field)).to.include('customerId'));"
+                  "pm.test('error reported on customerId', () => pm.expect(pm.response.json().errors.map(e => e.field)).to.include('customerId'));",
+                  "pm.test('error reported on productIds', () => pm.expect(pm.response.json().errors.map(e => e.field)).to.include('productIds'));"
                 ]
               }
             }
@@ -868,7 +1247,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"description\": \"Postman Order\",\n  \"customer\": { \"id\": 1 }\n}",
+              "raw": "{\n  \"description\": \"Postman Order\",\n  \"customer\": { \"id\": 1 },\n  \"productIds\": [{{productId}}]\n}",
               "options": {
                 "raw": {
                   "language": "json"
