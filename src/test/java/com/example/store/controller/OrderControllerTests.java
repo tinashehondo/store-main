@@ -4,9 +4,12 @@ import com.example.store.dto.CreateOrderRequest;
 import com.example.store.dto.OrderCustomerDTO;
 import com.example.store.dto.OrderDTO;
 import com.example.store.exception.ReferencedResourceNotFoundException;
+import com.example.store.exception.ResourceNotFoundException;
 import com.example.store.service.OrderService;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.data.domain.Page;
@@ -87,6 +90,41 @@ class OrderControllerTests {
                 .andExpect(jsonPath("$.errors[0].field").value("size"));
 
         verify(orderService, never()).findAll(any());
+    }
+
+    @Test
+    void getOrderByIdReturnsOrderWithItsCustomer() throws Exception {
+        when(orderService.findById(11L)).thenReturn(order(11L, "Test Order", 1L, "John Doe"));
+
+        mockMvc.perform(get("/order/11"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.id").value(11))
+                .andExpect(jsonPath("$.description").value("Test Order"))
+                .andExpect(jsonPath("$.customer.id").value(1))
+                .andExpect(jsonPath("$.customer.name").value("John Doe"));
+    }
+
+    @Test
+    void getOrderByUnknownIdReturns404() throws Exception {
+        when(orderService.findById(999L)).thenThrow(new ResourceNotFoundException("Order", 999L));
+
+        mockMvc.perform(get("/order/999"))
+                .andExpect(status().isNotFound())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.status").value(404))
+                .andExpect(jsonPath("$.detail").value("Order with id 999 not found"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"abc", "1.5", "99999999999999999999"})
+    void getOrderByNonNumericOrOverflowingIdReturns400(String id) throws Exception {
+        mockMvc.perform(get("/order/{id}", id))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.status").value(400));
+
+        verify(orderService, never()).findById(any());
     }
 
     @Test

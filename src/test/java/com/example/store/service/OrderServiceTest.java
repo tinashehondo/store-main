@@ -5,6 +5,7 @@ import com.example.store.dto.OrderDTO;
 import com.example.store.entity.Customer;
 import com.example.store.entity.Order;
 import com.example.store.exception.ReferencedResourceNotFoundException;
+import com.example.store.exception.ResourceNotFoundException;
 import com.example.store.mapper.OrderMapperImpl;
 import com.example.store.repository.CustomerRepository;
 import com.example.store.repository.OrderRepository;
@@ -64,6 +65,31 @@ class OrderServiceTest {
             assertThat(dto.getCustomer().getId()).isEqualTo(1L);
             assertThat(dto.getCustomer().getName()).isEqualTo("John Doe");
         });
+    }
+
+    @Test
+    void findByIdMapsOrderWithItsCustomer() {
+        Order order = new Order();
+        order.setId(7L);
+        order.setDescription("Test Order");
+        order.setCustomer(customer(1L, "John Doe"));
+        when(orderRepository.findWithCustomerById(7L)).thenReturn(Optional.of(order));
+
+        OrderDTO result = orderService.findById(7L);
+
+        assertThat(result.getId()).isEqualTo(7L);
+        assertThat(result.getDescription()).isEqualTo("Test Order");
+        assertThat(result.getCustomer().getId()).isEqualTo(1L);
+        assertThat(result.getCustomer().getName()).isEqualTo("John Doe");
+    }
+
+    @Test
+    void findByIdWithUnknownIdThrowsNotFound() {
+        when(orderRepository.findWithCustomerById(999L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> orderService.findById(999L))
+                .isInstanceOf(ResourceNotFoundException.class)
+                .hasMessage("Order with id 999 not found");
     }
 
     @Test

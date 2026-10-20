@@ -83,6 +83,49 @@ class OrderIntegrationTest extends AbstractIntegrationTest {
         assertThat(customer.get("name").asText()).isEqualTo("Heidi Becker");
     }
 
+    @Test
+    void getOrderByIdReturnsTheListShapeWithItsCustomer() throws Exception {
+        JsonNode order = objectMapper.readTree(mockMvc.perform(get("/order/10000"))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
+
+        assertThat(fieldNames(order)).containsExactlyInAnyOrder("id", "description", "customer");
+        assertThat(order.get("id").asLong()).isEqualTo(10_000L);
+        assertThat(order.get("description").asText()).isEqualTo("Bespoke Frozen Gloves");
+        assertThat(fieldNames(order.get("customer"))).containsExactlyInAnyOrder("id", "name");
+        assertThat(order.get("customer").get("id").asLong()).isEqualTo(58L);
+        assertThat(order.get("customer").get("name").asText()).isEqualTo("Heidi Becker");
+    }
+
+    @Test
+    void getOrderByIdUsesExactlyOneStatement() throws Exception {
+        SqlStatementCounter.Result sql = sqlStatementCounter()
+                .measure(() -> mockMvc.perform(get("/order/158")).andExpect(status().isOk()));
+
+        // The order with its customer join-fetched; no second query for the lazy customer.
+        assertThat(sql.statements()).isEqualTo(1);
+        assertThat(sql.entitiesLoaded()).isEqualTo(2);
+    }
+
+    @Test
+    void getOrderByUnknownIdReturns404() throws Exception {
+        mockMvc.perform(get("/order/999999999"))
+                .andExpect(status().isNotFound())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.status").value(404))
+                .andExpect(jsonPath("$.detail").value("Order with id 999999999 not found"));
+    }
+
+    @Test
+    void getOrderByNonNumericIdReturns400() throws Exception {
+        mockMvc.perform(get("/order/abc"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.status").value(400));
+    }
+
     @ParameterizedTest
     @ValueSource(ints = {1, 20, 100})
     void getOrdersUsesAtMostTwoStatementsWhateverThePageSize(int size) throws Exception {

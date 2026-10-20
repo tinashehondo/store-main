@@ -30,6 +30,11 @@ public class OrderController {
         return Pagination.response(orderService.findAll(Pagination.pageRequest(page, size)));
     }
 
+    @GetMapping("/{id}")
+    public OrderDTO getOrder(@PathVariable Long id) {
+        return orderService.findById(id);
+    }
+
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public OrderDTO createOrder(@Valid @RequestBody CreateOrderRequest request) {

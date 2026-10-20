@@ -11,6 +11,7 @@ import org.springframework.data.repository.query.Param;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 
 public interface OrderRepository extends JpaRepository<Order, Long> {
 
@@ -22,6 +23,10 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     @Override
     @EntityGraph(attributePaths = "customer")
     Page<Order> findAll(Pageable pageable);
+
+    /** One order with its customer join-fetched: a single statement, rather than findById plus a lazy load. */
+    @EntityGraph(attributePaths = "customer")
+    Optional<Order> findWithCustomerById(Long id);
 
     /**
      * Orders of several customers in one query, sorted by id, used to fill a page of customers. Filters on the

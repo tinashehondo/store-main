@@ -1,0 +1,28 @@
+databaseChangeLog:
+  - changeSet:
+      id: 5-pg-trgm-extension
+      author: store-team
+      comment: >-
+        pg_trgm provides the trigram operator classes behind the customer name search index. Creating an extension
+        needs elevated privileges; on managed PostgreSQL (RDS, Cloud SQL, Azure) it is typically a DBA step done
+        before deployment, in which case IF NOT EXISTS makes this changeset a no-op.
+      changes:
+        - sql:
+            sql: CREATE EXTENSION IF NOT EXISTS pg_trgm
+      rollback:
+        # Deliberately not dropped: the extension may be shared with other objects; removing it is a DBA decision.
+        - empty: {}
+  - changeSet:
+      id: 5-index-customer-name-trgm
+      author: store-team
+      comment: >-
+        Serves GET /customer?name=, i.e. lower(name) LIKE lower(?) with a leading wildcard, which a B-tree index cannot
+        serve. The index expression must be exactly lower(name), the expression in the query. CONCURRENTLY and no IF
+        NOT EXISTS for the same reasons as 4-index-order-customer-id.
+      runInTransaction: false
+      changes:
+        - sql:
+            sql: CREATE INDEX CONCURRENTLY idx_customer_name_trgm ON customer USING gin (lower(name) gin_trgm_ops)
+      rollback:
+        - sql:
+            sql: DROP INDEX CONCURRENTLY IF EXISTS idx_customer_name_trgm

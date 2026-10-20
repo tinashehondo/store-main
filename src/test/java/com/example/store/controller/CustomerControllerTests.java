@@ -6,6 +6,8 @@ import com.example.store.dto.CustomerOrderDTO;
 import com.example.store.service.CustomerService;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -23,8 +25,11 @@ import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.not;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -105,6 +110,77 @@ class CustomerControllerTests {
                 .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON));
 
         verify(customerService, never()).findAll(any());
+    }
+
+    @Test
+    void searchCustomersByNameReturnsPlainArrayWithPagingLinksThatKeepTheName() throws Exception {
+        when(customerService.search(eq("doe"), any()))
+                .thenReturn(new PageImpl<>(List.of(customer(1L, "John Doe")), Pagination.pageRequest(0, 1), 2));
+
+        // In the URL rather than via param(): MockMvc only fills the query string, which the links are built from,
+        // then.
+        mockMvc.perform(get("/customer?name=doe&size=1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$", hasSize(1)))
+                .andExpect(jsonPath("$[0].name").value("John Doe"))
+                .andExpect(header().string("X-Total-Count", "2"))
+                .andExpect(header().string(
+                                "Link",
+                                "<http://localhost/customer?name=doe&page=0&size=1>; rel=\"first\", "
+                                        + "<http://localhost/customer?name=doe&page=1&size=1>; rel=\"next\", "
+                                        + "<http://localhost/customer?name=doe&page=1&size=1>; rel=\"last\""));
+
+        verify(customerService).search("doe", PageRequest.of(0, 1, Sort.by("id")));
+        verify(customerService, never()).findAll(any());
+    }
+
+    @Test
+    void searchCustomersClampsSizeToOneHundred() throws Exception {
+        when(customerService.search(anyString(), any())).thenReturn(Page.empty());
+
+        mockMvc.perform(get("/customer").param("name", "doe").param("page", "3").param("size", "500"))
+                .andExpect(status().isOk());
+
+        verify(customerService).search("doe", PageRequest.of(3, 100, Sort.by("id")));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"", " ", "   ", "\t", "\n"})
+    void searchCustomersWithBlankNameReturns400(String name) throws Exception {
+        mockMvc.perform(get("/customer").param("name", name))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.errors[0].field").value("name"))
+                .andExpect(jsonPath("$.errors[0].message").value("must not be blank"));
+
+        verifyNoInteractions(customerService);
+    }
+
+    @Test
+    void searchCustomersWithTooLongNameReturns400() throws Exception {
+        mockMvc.perform(get("/customer").param("name", "x".repeat(256)))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.errors[0].field").value("name"));
+
+        verifyNoInteractions(customerService);
+    }
+
+    @Test
+    void searchCustomersAcceptsNameOfMaximumLength() throws Exception {
+        when(customerService.search(anyString(), any())).thenReturn(Page.empty());
+
+        mockMvc.perform(get("/customer").param("name", "x".repeat(255))).andExpect(status().isOk());
+    }
+
+    @Test
+    void searchCustomersWithInvalidPagingReturns400() throws Exception {
+        mockMvc.perform(get("/customer").param("name", "doe").param("page", "-1"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].field").value("page"));
+
+        verifyNoInteractions(customerService);
     }
 
     @Test

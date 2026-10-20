@@ -1,5 +1,6 @@
 package com.example.store.integration;
 
+import com.example.store.entity.Customer;
 import com.example.store.repository.CustomerRepository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -9,12 +10,14 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.web.servlet.MvcResult;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.stream.StreamSupport;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -31,6 +34,9 @@ class CustomerIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     private CustomerRepository customerRepository;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     @Test
     void createCustomerOnSeededDatabaseGetsIdAfterSeedData() throws Exception {
@@ -141,6 +147,158 @@ class CustomerIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.errors[0].field").value("page"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"MURIEL", "muriel", "mUrIeL DONNELLY", "  Muriel  "})
+    void searchIsCaseInsensitiveAndTrimsTheTerm(String name) throws Exception {
+        JsonNode customers = search(name);
+
+        assertThat(ids(customers)).contains(1L);
+        assertThat(names(customers)).allSatisfy(n -> assertThat(n.toLowerCase()).contains("muriel"));
+    }
+
+    @Test
+    void searchMatchesASubstringInTheMiddleOfAWord() throws Exception {
+        JsonNode customers = search("onnel");
+
+        assertThat(ids(customers)).contains(1L);
+        assertThat(names(customers)).allSatisfy(n -> assertThat(n).containsIgnoringCase("onnel"));
+        JsonNode muriel = StreamSupport.stream(customers.spliterator(), false)
+                .filter(node -> node.get("id").asLong() == 1L)
+                .findFirst()
+                .orElseThrow();
+        assertThat(fieldNames(muriel)).containsExactlyInAnyOrder("id", "name", "orders");
+        assertThat(muriel.get("name").asText()).isEqualTo("Muriel Donnelly");
+        assertThat(muriel.get("orders")).isNotEmpty();
+    }
+
+    @Test
+    void searchTreatsPercentAsALiteral() throws Exception {
+        String token = token();
+        Customer literal = saveCustomer("Pct%" + token);
+        // Would also match if % were a wildcard.
+        saveCustomer("Pct and more " + token);
+
+        assertThat(ids(search("pct%" + token))).containsExactly(literal.getId());
+        // A lone % matches only names that contain a literal %, not every customer.
+        JsonNode percent = search("%", "100");
+        assertThat(ids(percent)).contains(literal.getId());
+        assertThat(names(percent)).allSatisfy(n -> assertThat(n).contains("%"));
+    }
+
+    @Test
+    void searchTreatsUnderscoreAsALiteral() throws Exception {
+        String token = token();
+        Customer literal = saveCustomer("Lit_" + token);
+        // Would also match if _ were a single-character wildcard.
+        saveCustomer("LitX" + token);
+
+        assertThat(ids(search("lit_" + token))).containsExactly(literal.getId());
+        assertThat(names(search("_", "100"))).allSatisfy(n -> assertThat(n).contains("_"));
+    }
+
+    @Test
+    void searchTreatsTheEscapeCharacterAsALiteral() throws Exception {
+        String token = token();
+        Customer literal = saveCustomer("Back\\slash" + token);
+        saveCustomer("Backslash" + token);
+
+        assertThat(ids(search("k\\s"))).contains(literal.getId());
+        assertThat(ids(search("back\\slash" + token))).containsExactly(literal.getId());
+    }
+
+    @Test
+    void searchWithNoMatchReturnsEmptyArrayAndZeroTotal() throws Exception {
+        MockHttpServletResponse response = mockMvc.perform(get("/customer").param("name", "no such " + token()))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse();
+
+        assertThat(readArray(response)).isEmpty();
+        assertThat(response.getHeader("X-Total-Count")).isEqualTo("0");
+        assertThat(links(response.getHeader("Link"))).containsOnlyKeys("first", "last");
+    }
+
+    @Test
+    void searchResultsArePaginatedWithHeadersThatKeepTheName() throws Exception {
+        Long total =
+                jdbcTemplate.queryForObject("SELECT count(*) FROM customer WHERE lower(name) LIKE '%a%'", Long.class);
+        long last = (total - 1) / 5;
+        assertThat(last).as("the seed data has enough names containing 'a'").isGreaterThan(1);
+
+        // In the URL rather than via param(): MockMvc only fills the query string, which the links are built from,
+        // then.
+        MockHttpServletResponse response = mockMvc.perform(get("/customer?name=A&page=1&size=5"))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse();
+
+        assertThat(response.getHeader("X-Total-Count")).isEqualTo(String.valueOf(total));
+        assertThat(links(response.getHeader("Link")))
+                .containsExactly(
+                        Map.entry("first", "http://localhost/customer?name=A&page=0&size=5"),
+                        Map.entry("prev", "http://localhost/customer?name=A&page=0&size=5"),
+                        Map.entry("next", "http://localhost/customer?name=A&page=2&size=5"),
+                        Map.entry("last", "http://localhost/customer?name=A&page=" + last + "&size=5"));
+        JsonNode customers = readArray(response);
+        assertThat(ids(customers)).hasSize(5).isSorted();
+        assertThat(names(customers)).allSatisfy(n -> assertThat(n).containsIgnoringCase("a"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {1, 20, 100})
+    void searchUsesAtMostThreeStatementsWhateverThePageSize(int size) throws Exception {
+        MvcResult[] result = new MvcResult[1];
+
+        SqlStatementCounter.Result sql = sqlStatementCounter()
+                .measure(() -> result[0] = mockMvc.perform(
+                                get("/customer").param("name", "e").param("size", String.valueOf(size)))
+                        .andExpect(status().isOk())
+                        .andReturn());
+
+        // Same fetch plan as the list: matching page + count + one IN query for their orders.
+        assertThat(sql.statements()).isLessThanOrEqualTo(3);
+        assertThat(sql.collectionFetches()).isZero();
+        JsonNode customers = readArray(result[0].getResponse());
+        assertThat(customers).isNotEmpty().hasSizeLessThanOrEqualTo(size);
+        assertThat(customers.get(0).get("orders")).isNotEmpty();
+    }
+
+    @Test
+    void searchWithBlankNameReturns400() throws Exception {
+        mockMvc.perform(get("/customer").param("name", "   "))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.errors[0].field").value("name"));
+    }
+
+    private JsonNode search(String name) throws Exception {
+        return search(name, "20");
+    }
+
+    private JsonNode search(String name, String size) throws Exception {
+        return readArray(mockMvc.perform(get("/customer").param("name", name).param("size", size))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse());
+    }
+
+    private Customer saveCustomer(String name) {
+        Customer customer = new Customer();
+        customer.setName(name);
+        return customerRepository.save(customer);
+    }
+
+    /** Makes the names created by one test unique, as the database is shared by all tests. */
+    private static String token() {
+        return UUID.randomUUID().toString().substring(0, 8);
+    }
+
+    private static List<String> names(JsonNode array) {
+        List<String> names = new ArrayList<>();
+        array.forEach(node -> names.add(node.get("name").asText()));
+        return names;
     }
 
     private JsonNode readArray(MockHttpServletResponse response) throws Exception {

@@ -175,6 +175,93 @@ These gains are locked in by integration tests:
 - `CompressionIntegrationTest`: gzip on a real port.
 - `SchemaIntegrationTest`: the index exists and is valid.
 
+## Lookups added in Phase 2
+
+### `GET /order/{id}`: one statement
+
+`OrderRepository.findWithCustomerById` is a derived query with `@EntityGraph(attributePaths = "customer")`. It
+replaces a `findById` followed by a lazy load of the customer (two round trips):
+
+```sql
+select o.id, o.customer_id, c.id, c.name, o.description
+from "order" o join customer c on c.id = o.customer_id
+where o.id = ?;
+```
+
+`OrderIntegrationTest` asserts exactly 1 statement and 2 entities loaded.
+
+### `GET /customer?name=`: substring search backed by a trigram index
+
+The search is a case-insensitive substring match. User input is escaped (`\`, `%`, `_`), so wildcards in it are matched
+literally. It has the same fetch plan as the list (page, count, one `IN` query for the orders), so it is at most **3
+statements** for any page size. Hibernate generates:
+
+```sql
+select c.id, c.name from customer c
+where lower(c.name) like lower(?) escape '\'
+order by c.id offset ? rows fetch first ? rows only;
+select count(c.id) from customer c where lower(c.name) like lower(?) escape '\';
+```
+
+A pattern with a leading wildcard cannot use a B-tree index, so without help every search is a sequential scan of
+`customer`. `db.changelog-5.yaml` adds:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE INDEX CONCURRENTLY idx_customer_name_trgm ON customer USING gin (lower(name) gin_trgm_ops);
+```
+
+- **The expressions must match.** The index is on `lower(name)` and the query filters on `lower(c.name)`. With
+  `upper(...)`, a different collation or no function at all, the planner cannot use the index.
+  `SchemaIntegrationTest` asserts that the index definition is exactly this, and that the planner can use it for the
+  search predicate (`EXPLAIN` with `SET LOCAL enable_seqscan = off`, because on 100 seed rows a seq scan is rightly
+  cheaper).
+- **Both sides are lowered by PostgreSQL** (`lower(:pattern)`), not one in Java and one in SQL. Case folding then
+  follows a single set of rules, the database's. Java's `toLowerCase` differs from PostgreSQL's `lower()` for some
+  characters, such as `İ`.
+- **`CREATE EXTENSION` needs elevated privileges.** On managed PostgreSQL (RDS, Cloud SQL, Azure) the application user
+  usually cannot run it, so it is a **DBA step before deployment**. `pg_trgm` is on the allow-list of all of them.
+  `IF NOT EXISTS` then makes the changeset a no-op. Its rollback deliberately does not drop the extension.
+- **Trigrams only help for terms of at least 3 characters.** A 1-2 character term yields no complete trigram, so the
+  index cannot narrow the search and PostgreSQL scans the table.
+- `CONCURRENTLY` with `runInTransaction: false`, and no `IF NOT EXISTS`, for the same reasons as
+  `idx_order_customer_id`.
+
+Expected plan (seed data, `enable_seqscan = off`, or any table large enough that a seq scan is not cheaper):
+
+```
+Aggregate
+  ->  Bitmap Heap Scan on customer c
+        Recheck Cond: (lower((name)::text) ~~ '%onnel%'::text)
+        ->  Bitmap Index Scan on idx_customer_name_trgm
+              Index Cond: (lower((name)::text) ~~ '%onnel%'::text)
+```
+
+Measured on a scratch PostgreSQL 16.2 with **1,000,000 generated customers** (default planner settings,
+`EXPLAIN ANALYZE`):
+
+| Term | Page query (`ORDER BY id LIMIT 20`) | Count query (`X-Total-Count`) |
+|------|-------------------------------------|-------------------------------|
+| `onnel` (1 match) | Bitmap Index Scan on `idx_customer_name_trgm` + sort, **2.2 ms** | Bitmap Index Scan, **1.2 ms** |
+| `abc` (2,867 matches) | Index Scan on `customer_pkey` + filter, 6.1 ms | Bitmap Index Scan, **8.6 ms** |
+| `ab` (53,196 matches, 2 chars) | Index Scan on `customer_pkey` + filter, 0.2 ms | Parallel **Seq Scan**, **235 ms** |
+
+How to read this:
+
+- **The page query plan depends on the term, and that is correct.** For a frequent term, walking the primary key in id
+  order and stopping after 20 matches is cheaper than collecting every match and sorting. The planner chooses from its
+  selectivity estimates, so no single plan is asserted for the page query.
+- **The count query is the expensive one for short terms.** It must visit every match. For terms under 3 characters it
+  is a full scan, which grows with the table. If this becomes a problem, the options are a minimum term length of 3
+  (a contract change: today only blank is rejected), an estimated or capped count, or dropping `X-Total-Count` for
+  searches. See "Exact `COUNT(*)` on large tables" below.
+- GIN indexes slow down writes a little (`fastupdate` defers part of the cost) and are larger than B-trees. For a name
+  column that is rarely updated, that is a good trade.
+
+**Accepted semantics:** matching is a substring of the whole name, not of each word. That satisfies "a substring of
+one of the words in their name". The only difference is that a term containing a space (`"el Do"`) can match across a
+word boundary ("Muri**el Do**nnelly").
+
 ## Considered but deliberately not done
 
 | Option | Why not (now) |
@@ -204,7 +291,8 @@ Pagination limits the number of customers, not the size of each one. The recomme
 
 1. **Count statements per request.** Temporarily set `spring.jpa.properties.hibernate.generate_statistics=true` (or
    `logging.level.org.hibernate.stat=DEBUG` for a per-session summary) on one instance. Expect 3 statements for
-   `/customer` and 2 for `/order`. Turn it off afterwards; statistics have a cost.
+   `/customer` (with or without `name`), 2 for `/order` and 1 for `/order/{id}`. Turn it off afterwards; statistics
+   have a cost.
 2. **Watch the pool** through the Hikari metrics (`hikaricp.connections.pending`, `.acquire`, `.usage`, `.timeout`) once
    Actuator/Micrometer is wired in. Pending connections or timeouts mean the pool is too small or queries are slow.
 3. **Check the plans** in `psql`, with real ids:
@@ -223,8 +311,13 @@ Pagination limits the number of customers, not the size of each one. The recomme
    -- The X-Total-Count query.
    EXPLAIN (ANALYZE, BUFFERS) SELECT count(*) FROM "order";
 
+   -- Customer search: expect a Bitmap Index Scan on idx_customer_name_trgm for selective terms of 3+ characters.
+   EXPLAIN (ANALYZE, BUFFERS)
+   SELECT count(id) FROM customer WHERE lower(name) LIKE lower('%onnel%') ESCAPE '\';
+
    -- The index is valid (false would mean a failed CREATE INDEX CONCURRENTLY).
-   SELECT indexrelid::regclass, indisvalid FROM pg_index WHERE indexrelid = 'idx_order_customer_id'::regclass;
+   SELECT indexrelid::regclass, indisvalid FROM pg_index
+   WHERE indexrelid IN ('idx_order_customer_id'::regclass, 'idx_customer_name_trgm'::regclass);
    ```
 
 4. **Find slow or chatty statements** with `pg_stat_statements` (`calls`, `mean_exec_time`, `rows`, ordered by

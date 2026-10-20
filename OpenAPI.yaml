@@ -73,12 +73,58 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/CreateOrderRequest'
+  '/order/{id}':
+    get:
+      summary: Get Order
+      tags:
+        - store
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Id of the order.
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          description: The id is not a valid 64-bit integer
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      operationId: getOrder
+      description: Get one order by id, with its customer.
   /customer:
     get:
       summary: Get Customers
       tags:
         - store
       parameters:
+        - name: name
+          in: query
+          required: false
+          description: >-
+            Optional search term. When present, only customers whose name contains it are returned: a
+            case-insensitive substring match anywhere in the name (e.g. `onnel` and `MURIEL` both match
+            "Muriel Donnelly"), so a term containing a space can match across words. Leading and trailing whitespace
+            is ignored; `%`, `_` and `\` are matched literally, not as wildcards. A blank value or more than 255
+            characters is rejected with 400. Results are paginated exactly like the unfiltered list.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 255
+          example: onnel
         - $ref: '#/components/parameters/Page'
         - $ref: '#/components/parameters/Size'
       responses:
@@ -102,8 +148,8 @@ paths:
           $ref: '#/components/responses/InternalServerError'
       operationId: getCustomers
       description: >-
-        Get one page of customers, each with all of its orders (sorted by id). Note that the embedded orders are not
-        paginated.
+        Get one page of customers, optionally filtered by `name`, each with all of its orders (sorted by id). Note that
+        the embedded orders are not paginated.
     post:
       summary: Create Customer
       tags:

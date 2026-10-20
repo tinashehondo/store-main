@@ -5,6 +5,7 @@ import com.example.store.dto.OrderDTO;
 import com.example.store.entity.Customer;
 import com.example.store.entity.Order;
 import com.example.store.exception.ReferencedResourceNotFoundException;
+import com.example.store.exception.ResourceNotFoundException;
 import com.example.store.mapper.OrderMapper;
 import com.example.store.repository.CustomerRepository;
 import com.example.store.repository.OrderRepository;
@@ -29,6 +30,14 @@ public class OrderService {
     // inside the transaction as open-in-view is disabled.
     public Page<OrderDTO> findAll(Pageable pageable) {
         return orderRepository.findAll(pageable).map(orderMapper::orderToOrderDTO);
+    }
+
+    // One statement: the order with its customer join-fetched.
+    public OrderDTO findById(Long id) {
+        return orderRepository
+                .findWithCustomerById(id)
+                .map(orderMapper::orderToOrderDTO)
+                .orElseThrow(() -> new ResourceNotFoundException("Order", id));
     }
 
     @Transactional

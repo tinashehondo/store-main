@@ -12,6 +12,8 @@ import com.example.store.repository.OrderRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.Page;
@@ -79,6 +81,62 @@ class CustomerServiceTest {
         assertThat(result.getContent()).isEmpty();
         assertThat(result.getTotalElements()).isEqualTo(100);
         verifyNoInteractions(orderRepository);
+    }
+
+    @Test
+    void searchTrimsAndEscapesTheNameThenLoadsOrdersOfThePageInOneQuery() {
+        Customer john = customer(1L, "John 100%_Doe");
+        Pageable pageable = PageRequest.of(0, 20);
+        when(customerRepository.findByNameLike("%100\\%\\_%", pageable))
+                .thenReturn(new PageImpl<>(List.of(john), pageable, 1));
+        when(orderRepository.findByCustomerIdIn(List.of(1L))).thenReturn(List.of(order(5L, "A", john)));
+
+        Page<CustomerDTO> result = customerService.search("  100%_ ", pageable);
+
+        assertThat(result.getTotalElements()).isEqualTo(1);
+        assertThat(result.getContent()).singleElement().satisfies(dto -> {
+            assertThat(dto.getName()).isEqualTo("John 100%_Doe");
+            assertThat(dto.getOrders()).extracting(CustomerOrderDTO::getId).containsExactly(5L);
+        });
+    }
+
+    @Test
+    void searchKeepsTheCaseOfTheTermAsTheDatabaseLowersBothSides() {
+        Pageable pageable = PageRequest.of(0, 20);
+        when(customerRepository.findByNameLike("%MuRiEl%", pageable)).thenReturn(Page.empty(pageable));
+
+        customerService.search("MuRiEl", pageable);
+
+        verify(customerRepository).findByNameLike("%MuRiEl%", pageable);
+    }
+
+    @Test
+    void searchWithNoMatchDoesNotQueryOrders() {
+        Pageable pageable = PageRequest.of(0, 20);
+        when(customerRepository.findByNameLike(any(), any())).thenReturn(new PageImpl<>(List.of(), pageable, 0));
+
+        Page<CustomerDTO> result = customerService.search("nobody", pageable);
+
+        assertThat(result.getContent()).isEmpty();
+        assertThat(result.getTotalElements()).isZero();
+        verifyNoInteractions(orderRepository);
+    }
+
+    @ParameterizedTest
+    @CsvSource(
+            delimiter = '|',
+            quoteCharacter = '"',
+            value = {
+                "onnel       | %onnel%",
+                "%           | %\\%%",
+                "_           | %\\_%",
+                "50%_off     | %50\\%\\_off%",
+                "\\          | %\\\\%",
+                "a\\%        | %a\\\\\\%%",
+                "\"Jo Doe\"  | %Jo Doe%",
+            })
+    void containsPatternEscapesTheEscapeCharacterAndWildcards(String term, String expected) {
+        assertThat(CustomerService.containsPattern(term)).isEqualTo(expected);
     }
 
     @Test

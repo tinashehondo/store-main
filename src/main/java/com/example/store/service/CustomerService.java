@@ -37,7 +37,27 @@ public class CustomerService {
      * order row. Mapping happens inside the transaction as open-in-view is disabled.
      */
     public Page<CustomerDTO> findAll(Pageable pageable) {
-        Page<Customer> customers = customerRepository.findAll(pageable);
+        return withOrders(customerRepository.findAll(pageable));
+    }
+
+    /**
+     * Customers whose name contains {@code name} anywhere, case-insensitively, with the same three-statement fetch plan
+     * as {@link #findAll}. The term is trimmed and its LIKE wildcards are matched literally.
+     */
+    public Page<CustomerDTO> search(String name, Pageable pageable) {
+        return withOrders(customerRepository.findByNameLike(containsPattern(name.strip()), pageable));
+    }
+
+    /**
+     * A LIKE pattern matching {@code term} as a literal substring: the escape character {@code \} itself is escaped
+     * first, then the wildcards {@code %} and {@code _}.
+     */
+    static String containsPattern(String term) {
+        String escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+        return "%" + escaped + "%";
+    }
+
+    private Page<CustomerDTO> withOrders(Page<Customer> customers) {
         if (customers.isEmpty()) {
             return customers.map(customerMapper::customerToCustomerDTO);
         }
