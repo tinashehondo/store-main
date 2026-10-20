@@ -1,0 +1,22 @@
+version: 2
+updates:
+  - package-ecosystem: gradle
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      # One PR for Spring Boot and the dependencies whose versions it manages, which are released together.
+      spring-boot:
+        patterns:
+          - org.springframework.boot*
+          - io.spring.dependency-management
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly

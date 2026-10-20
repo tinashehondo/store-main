@@ -1,0 +1,17 @@
+# Only the Gradle wrapper, build scripts and src/ are needed to build the image; keeping the rest out shrinks the
+# build context and avoids invalidating the layer cache on unrelated changes.
+.git/
+.github/
+.gradle/
+build/
+**/build/
+utils/node_modules/
+postman/
+.idea/
+.vscode/
+*.iml
+*.iws
+*.ipr
+.DS_Store
+Dockerfile
+.dockerignore

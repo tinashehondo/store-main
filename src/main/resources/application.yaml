@@ -36,6 +36,20 @@ spring:
     change-log: classpath:db/changelog/db.changelog-master.yaml
     contexts: ${LIQUIBASE_CONTEXTS:demo}
 
+management:
+  endpoints:
+    web:
+      exposure:
+        # Only health is exposed over HTTP; every other actuator endpoint stays unreachable.
+        include: health
+  endpoint:
+    health:
+      # /actuator/health/liveness and /actuator/health/readiness for orchestrator probes (Kubernetes enables these
+      # automatically; set explicitly so they also exist under plain Docker).
+      probes:
+        enabled: true
+      show-details: never
+
 server:
   compression:
     enabled: true
