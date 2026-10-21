@@ -1,4 +1,7 @@
 spring:
+  liquibase:
+    # The integration tests assert against the demo seed data. The datasource comes from Testcontainers.
+    contexts: demo
   jpa:
     properties:
       hibernate:

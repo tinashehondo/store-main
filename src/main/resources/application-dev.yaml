@@ -1,6 +1,12 @@
+# Local development: the credentials of the documented Postgres container and the demo seed data.
 spring:
+  datasource:
+    username: ${DB_USERNAME:admin}
+    password: ${DB_PASSWORD:admin}
   jpa:
     properties:
       hibernate:
         format_sql: true
         use_sql_comments: true
+  liquibase:
+    contexts: ${LIQUIBASE_CONTEXTS:demo}

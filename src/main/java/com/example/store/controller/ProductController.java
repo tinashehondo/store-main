@@ -5,6 +5,7 @@ import com.example.store.dto.ProductDTO;
 import com.example.store.service.ProductService;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.PositiveOrZero;
 
@@ -26,7 +27,7 @@ public class ProductController {
 
     @GetMapping
     public ResponseEntity<List<ProductDTO>> getAllProducts(
-            @RequestParam(defaultValue = "0") @PositiveOrZero int page,
+            @RequestParam(defaultValue = "0") @PositiveOrZero @Max(Pagination.MAX_PAGE) int page,
             @RequestParam(defaultValue = "" + Pagination.DEFAULT_PAGE_SIZE) @Positive int size) {
         return Pagination.response(productService.findAll(Pagination.pageRequest(page, size)));
     }

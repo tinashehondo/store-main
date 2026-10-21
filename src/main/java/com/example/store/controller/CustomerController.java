@@ -2,9 +2,11 @@ package com.example.store.controller;
 
 import com.example.store.dto.CreateCustomerRequest;
 import com.example.store.dto.CustomerDTO;
+import com.example.store.dto.TextConstraints;
 import com.example.store.service.CustomerService;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.PositiveOrZero;
@@ -27,7 +29,7 @@ public class CustomerController {
 
     @GetMapping
     public ResponseEntity<List<CustomerDTO>> getAllCustomers(
-            @RequestParam(defaultValue = "0") @PositiveOrZero int page,
+            @RequestParam(defaultValue = "0") @PositiveOrZero @Max(Pagination.MAX_PAGE) int page,
             @RequestParam(defaultValue = "" + Pagination.DEFAULT_PAGE_SIZE) @Positive int size) {
         return Pagination.response(customerService.findAll(Pagination.pageRequest(page, size)));
     }
@@ -35,13 +37,17 @@ public class CustomerController {
     /**
      * Same endpoint as the list, selected when {@code name} is present: customers whose name contains it, ignoring
      * case. Paginated exactly like the list; the paging links keep {@code name}. {@code @NotBlank} would also reject a
-     * missing value, which cannot happen here, so blankness is checked with a pattern (DOTALL so a newline is not
-     * "blank").
+     * missing value, which cannot happen here, so blankness is checked with a pattern that agrees with the
+     * {@code strip()} applied by the service.
      */
     @GetMapping(params = "name")
     public ResponseEntity<List<CustomerDTO>> searchCustomers(
-            @RequestParam @Size(max = 255) @Pattern(regexp = "(?s).*\\S.*", message = "must not be blank") String name,
-            @RequestParam(defaultValue = "0") @PositiveOrZero int page,
+            @RequestParam
+                    @Size(max = 255)
+                    @Pattern(regexp = TextConstraints.NOT_BLANK, message = "must not be blank")
+                    @Pattern(regexp = TextConstraints.NO_NUL, message = TextConstraints.NO_NUL_MESSAGE)
+                    String name,
+            @RequestParam(defaultValue = "0") @PositiveOrZero @Max(Pagination.MAX_PAGE) int page,
             @RequestParam(defaultValue = "" + Pagination.DEFAULT_PAGE_SIZE) @Positive int size) {
         return Pagination.response(customerService.search(name, Pagination.pageRequest(page, size)));
     }

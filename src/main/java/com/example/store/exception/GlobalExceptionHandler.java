@@ -11,6 +11,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.lang.NonNull;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingPathVariableException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
@@ -102,6 +103,27 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         ProblemDetail body =
                 problem(HttpStatus.BAD_REQUEST, "Malformed request body", "The request body is not readable.");
         return handleExceptionInternal(ex, body, headers, status, request);
+    }
+
+    /**
+     * A path variable that converts to null, e.g. a blank id in {@code /order/%20}, is a 400, but Spring builds the
+     * body before it knows that and leaves it saying 500. A variable missing from the route itself is a mapping bug:
+     * keep Spring's 500.
+     */
+    @Override
+    protected ResponseEntity<Object> handleMissingPathVariable(
+            @NonNull MissingPathVariableException ex,
+            @NonNull HttpHeaders headers,
+            @NonNull HttpStatusCode status,
+            @NonNull WebRequest request) {
+        if (!ex.isMissingAfterConversion()) {
+            return super.handleMissingPathVariable(ex, headers, status, request);
+        }
+        ProblemDetail body = problem(
+                HttpStatus.BAD_REQUEST,
+                "Bad Request",
+                "Required path variable '" + ex.getVariableName() + "' is not present.");
+        return handleExceptionInternal(ex, body, headers, HttpStatus.BAD_REQUEST, request);
     }
 
     private static ProblemDetail validationProblem(List<Map<String, String>> errors) {

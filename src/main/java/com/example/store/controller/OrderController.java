@@ -5,6 +5,7 @@ import com.example.store.dto.OrderDTO;
 import com.example.store.service.OrderService;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.PositiveOrZero;
 
@@ -25,7 +26,7 @@ public class OrderController {
 
     @GetMapping
     public ResponseEntity<List<OrderDTO>> getAllOrders(
-            @RequestParam(defaultValue = "0") @PositiveOrZero int page,
+            @RequestParam(defaultValue = "0") @PositiveOrZero @Max(Pagination.MAX_PAGE) int page,
             @RequestParam(defaultValue = "" + Pagination.DEFAULT_PAGE_SIZE) @Positive int size) {
         return Pagination.response(orderService.findAll(Pagination.pageRequest(page, size)));
     }

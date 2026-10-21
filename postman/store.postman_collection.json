@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Store (local)",
-    "description": "Requests and checks for the store API running locally (./gradlew bootRun on port 8080, seeded with the demo data). Run the whole collection with the Collection Runner, or send requests one by one. Change baseUrl in the collection variables to target another host.",
+    "description": "Requests and checks for the store API, seeded with the demo data (the dev profile, or LIQUIBASE_CONTEXTS=demo). Run the folders in order: later requests use the customer, product and order ids that earlier ones create. baseUrl defaults to http://localhost:8080; with newman, override it with --env-var baseUrl=http://host:port.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "event": [
@@ -56,6 +56,10 @@
     {
       "key": "ordersLastPageUrl",
       "value": "http://localhost:8080/order?page=0&size=20"
+    },
+    {
+      "key": "orderId",
+      "value": "1"
     }
   ],
   "item": [
@@ -314,6 +318,408 @@
           ]
         },
         {
+          "name": "Get customers (page whose offset overflows -> 400)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/customer?page=2147483647&size=100",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "customer"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "2147483647"
+                },
+                {
+                  "key": "size",
+                  "value": "100"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('RFC 7807 problem+json with a matching status', () => {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().status).to.eql(400);",
+                  "});",
+                  "pm.test('no internals in the body', () => {",
+                  "    const text = pm.response.text().toLowerCase();",
+                  "    ['exception', 'jackson', 'hibernate', 'springframework', 'sql', 'at com.'].forEach(s => pm.expect(text).to.not.include(s));",
+                  "});",
+                  "pm.test('error on page', () => pm.expect(pm.response.json().errors.map(e => e.field)).to.include('page'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Search customers by name (match)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/customer?name=muriel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "customer"
+              ],
+              "query": [
+                {
+                  "key": "name",
+                  "value": "muriel"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('body is a plain JSON array', () => pm.expect(pm.response.json()).to.be.an('array'));",
+                  "pm.test('X-Total-Count header is a number', () => pm.expect(Number(pm.response.headers.get('X-Total-Count'))).to.be.at.least(0));",
+                  "const names = pm.response.json().map(c => c.name);",
+                  "pm.test('Muriel Donnelly (id 1, demo data) is found', () => pm.expect(pm.response.json().map(c => c.id)).to.include(1));",
+                  "pm.test('every name contains \"muriel\" ignoring case', () => names.forEach(n => pm.expect(n.toLowerCase()).to.include('muriel')));",
+                  "pm.test('Link header keeps name', () => pm.expect(parseLinks(pm.response.headers.get('Link')).first).to.include('name=muriel'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Search customers by name (case-insensitive)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/customer?name=MuRiEl",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "customer"
+              ],
+              "query": [
+                {
+                  "key": "name",
+                  "value": "MuRiEl"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('body is a plain JSON array', () => pm.expect(pm.response.json()).to.be.an('array'));",
+                  "pm.test('X-Total-Count header is a number', () => pm.expect(Number(pm.response.headers.get('X-Total-Count'))).to.be.at.least(0));",
+                  "const names = pm.response.json().map(c => c.name);",
+                  "pm.test('Muriel Donnelly (id 1, demo data) is found', () => pm.expect(pm.response.json().map(c => c.id)).to.include(1));",
+                  "pm.test('every name contains \"muriel\" ignoring case', () => names.forEach(n => pm.expect(n.toLowerCase()).to.include('muriel')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Search customers by name (middle of a word)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/customer?name=urie",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "customer"
+              ],
+              "query": [
+                {
+                  "key": "name",
+                  "value": "urie"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('body is a plain JSON array', () => pm.expect(pm.response.json()).to.be.an('array'));",
+                  "pm.test('X-Total-Count header is a number', () => pm.expect(Number(pm.response.headers.get('X-Total-Count'))).to.be.at.least(0));",
+                  "const names = pm.response.json().map(c => c.name);",
+                  "pm.test('Muriel Donnelly (id 1, demo data) is found', () => pm.expect(pm.response.json().map(c => c.id)).to.include(1));",
+                  "pm.test('every name contains \"urie\" ignoring case', () => names.forEach(n => pm.expect(n.toLowerCase()).to.include('urie')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Search customers by name (Link encodes the term)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/customer?name=a%20b%26c",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "customer"
+              ],
+              "query": [
+                {
+                  "key": "name",
+                  "value": "a%20b%26c"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('body is a plain JSON array', () => pm.expect(pm.response.json()).to.be.an('array'));",
+                  "pm.test('X-Total-Count header is a number', () => pm.expect(Number(pm.response.headers.get('X-Total-Count'))).to.be.at.least(0));",
+                  "pm.test('X-Total-Count is 0', () => pm.expect(pm.response.headers.get('X-Total-Count')).to.eql('0'));",
+                  "pm.test('Link header keeps the encoded term', () => pm.expect(parseLinks(pm.response.headers.get('Link')).first).to.include('name=a%20b%26c'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Search customers by name (no match -> empty array)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/customer?name=zzqqxxnomatch",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "customer"
+              ],
+              "query": [
+                {
+                  "key": "name",
+                  "value": "zzqqxxnomatch"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('body is a plain JSON array', () => pm.expect(pm.response.json()).to.be.an('array'));",
+                  "pm.test('X-Total-Count header is a number', () => pm.expect(Number(pm.response.headers.get('X-Total-Count'))).to.be.at.least(0));",
+                  "pm.test('X-Total-Count is 0', () => pm.expect(pm.response.headers.get('X-Total-Count')).to.eql('0'));",
+                  "pm.test('body is []', () => pm.expect(pm.response.json()).to.eql([]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Search customers by name (% is a literal)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/customer?name=%25",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "customer"
+              ],
+              "query": [
+                {
+                  "key": "name",
+                  "value": "%25"
+                }
+              ]
+            },
+            "description": "Without escaping, % would be a wildcard and return every customer."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('body is a plain JSON array', () => pm.expect(pm.response.json()).to.be.an('array'));",
+                  "pm.test('X-Total-Count header is a number', () => pm.expect(Number(pm.response.headers.get('X-Total-Count'))).to.be.at.least(0));",
+                  "pm.test('every name contains a literal %', () => pm.response.json().forEach(c => pm.expect(c.name).to.include('%')));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Search customers by name (blank -> 400)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/customer?name=%20%20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "customer"
+              ],
+              "query": [
+                {
+                  "key": "name",
+                  "value": "%20%20"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('RFC 7807 problem+json with a matching status', () => {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().status).to.eql(400);",
+                  "});",
+                  "pm.test('no internals in the body', () => {",
+                  "    const text = pm.response.text().toLowerCase();",
+                  "    ['exception', 'jackson', 'hibernate', 'springframework', 'sql', 'at com.'].forEach(s => pm.expect(text).to.not.include(s));",
+                  "});",
+                  "pm.test('error on name', () => pm.expect(pm.response.json().errors.map(e => e.field)).to.include('name'));",
+                  "pm.test('message is \"must not be blank\"', () => pm.expect(pm.response.json().errors[0].message).to.eql('must not be blank'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Search customers by name (Unicode space -> 400)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/customer?name=%E2%80%83",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "customer"
+              ],
+              "query": [
+                {
+                  "key": "name",
+                  "value": "%E2%80%83"
+                }
+              ]
+            },
+            "description": "An em space (U+2003)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('RFC 7807 problem+json with a matching status', () => {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().status).to.eql(400);",
+                  "});",
+                  "pm.test('no internals in the body', () => {",
+                  "    const text = pm.response.text().toLowerCase();",
+                  "    ['exception', 'jackson', 'hibernate', 'springframework', 'sql', 'at com.'].forEach(s => pm.expect(text).to.not.include(s));",
+                  "});",
+                  "pm.test('error on name', () => pm.expect(pm.response.json().errors.map(e => e.field)).to.include('name'));",
+                  "pm.test('message is \"must not be blank\"', () => pm.expect(pm.response.json().errors[0].message).to.eql('must not be blank'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Search customers by name (NUL -> 400)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/customer?name=%00",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "customer"
+              ],
+              "query": [
+                {
+                  "key": "name",
+                  "value": "%00"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('RFC 7807 problem+json with a matching status', () => {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().status).to.eql(400);",
+                  "});",
+                  "pm.test('no internals in the body', () => {",
+                  "    const text = pm.response.text().toLowerCase();",
+                  "    ['exception', 'jackson', 'hibernate', 'springframework', 'sql', 'at com.'].forEach(s => pm.expect(text).to.not.include(s));",
+                  "});",
+                  "pm.test('error on name', () => pm.expect(pm.response.json().errors.map(e => e.field)).to.include('name'));",
+                  "pm.test('message is \"must not contain NUL characters\"', () => pm.expect(pm.response.json().errors[0].message).to.eql('must not contain NUL characters'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "Create customer",
           "request": {
             "method": "POST",
@@ -452,6 +858,185 @@
               }
             }
           ]
+        },
+        {
+          "name": "Create customer (duplicate key -> 400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/customer",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "customer"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"x\",\"name\":\"y\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('RFC 7807 problem+json with a matching status', () => {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().status).to.eql(400);",
+                  "});",
+                  "pm.test('no internals in the body', () => {",
+                  "    const text = pm.response.text().toLowerCase();",
+                  "    ['exception', 'jackson', 'hibernate', 'springframework', 'sql', 'at com.'].forEach(s => pm.expect(text).to.not.include(s));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create customer (NUL in name -> 400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/customer",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "customer"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"name\":\"a\\u0000b\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('RFC 7807 problem+json with a matching status', () => {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().status).to.eql(400);",
+                  "});",
+                  "pm.test('no internals in the body', () => {",
+                  "    const text = pm.response.text().toLowerCase();",
+                  "    ['exception', 'jackson', 'hibernate', 'springframework', 'sql', 'at com.'].forEach(s => pm.expect(text).to.not.include(s));",
+                  "});",
+                  "pm.test('error on name', () => pm.expect(pm.response.json().errors.map(e => e.field)).to.include('name'));",
+                  "pm.test('message is \"must not contain NUL characters\"', () => pm.expect(pm.response.json().errors[0].message).to.eql('must not contain NUL characters'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create customer (text/plain -> 415)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "text/plain"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/customer",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "customer"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "Postman Customer"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 415', () => pm.response.to.have.status(415));",
+                  "pm.test('RFC 7807 problem+json with a matching status', () => {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().status).to.eql(415);",
+                  "});",
+                  "pm.test('no internals in the body', () => {",
+                  "    const text = pm.response.text().toLowerCase();",
+                  "    ['exception', 'jackson', 'hibernate', 'springframework', 'sql', 'at com.'].forEach(s => pm.expect(text).to.not.include(s));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete customers (unsupported method -> 405)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/customer",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "customer"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 405', () => pm.response.to.have.status(405));",
+                  "pm.test('RFC 7807 problem+json with a matching status', () => {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().status).to.eql(405);",
+                  "});",
+                  "pm.test('no internals in the body', () => {",
+                  "    const text = pm.response.text().toLowerCase();",
+                  "    ['exception', 'jackson', 'hibernate', 'springframework', 'sql', 'at com.'].forEach(s => pm.expect(text).to.not.include(s));",
+                  "});"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
@@ -548,6 +1133,99 @@
                   "    pm.expect(pm.response.json().status).to.eql(400);",
                   "});",
                   "pm.test('error reported on description', () => pm.expect(pm.response.json().errors.map(e => e.field)).to.include('description'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create product (duplicate key -> 400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/products",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"description\":\"a\",\"description\":\"b\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('RFC 7807 problem+json with a matching status', () => {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().status).to.eql(400);",
+                  "});",
+                  "pm.test('no internals in the body', () => {",
+                  "    const text = pm.response.text().toLowerCase();",
+                  "    ['exception', 'jackson', 'hibernate', 'springframework', 'sql', 'at com.'].forEach(s => pm.expect(text).to.not.include(s));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create product (text/plain -> 415)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "text/plain"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/products",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "Postman Product"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 415', () => pm.response.to.have.status(415));",
+                  "pm.test('RFC 7807 problem+json with a matching status', () => {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().status).to.eql(415);",
+                  "});",
+                  "pm.test('no internals in the body', () => {",
+                  "    const text = pm.response.text().toLowerCase();",
+                  "    ['exception', 'jackson', 'hibernate', 'springframework', 'sql', 'at com.'].forEach(s => pm.expect(text).to.not.include(s));",
+                  "});"
                 ]
               }
             }
@@ -732,6 +1410,42 @@
               }
             }
           ]
+        },
+        {
+          "name": "Get product (blank id -> 400)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/products/%20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products",
+                "%20"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('RFC 7807 problem+json with a matching status', () => {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().status).to.eql(400);",
+                  "});",
+                  "pm.test('no internals in the body', () => {",
+                  "    const text = pm.response.text().toLowerCase();",
+                  "    ['exception', 'jackson', 'hibernate', 'springframework', 'sql', 'at com.'].forEach(s => pm.expect(text).to.not.include(s));",
+                  "});"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
@@ -791,9 +1505,7 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": {
-              "raw": "{{ordersLastPageUrl}}"
-            },
+            "url": "{{ordersLastPageUrl}}",
             "description": "Requests the URL taken from the Link header of 'Get orders (default page)'. Run that one first."
           },
           "event": [
@@ -995,6 +1707,52 @@
           ]
         },
         {
+          "name": "Get orders (page whose offset overflows -> 400)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/order?page=2147483647&size=100",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "order"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "2147483647"
+                },
+                {
+                  "key": "size",
+                  "value": "100"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('RFC 7807 problem+json with a matching status', () => {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().status).to.eql(400);",
+                  "});",
+                  "pm.test('no internals in the body', () => {",
+                  "    const text = pm.response.text().toLowerCase();",
+                  "    ['exception', 'jackson', 'hibernate', 'springframework', 'sql', 'at com.'].forEach(s => pm.expect(text).to.not.include(s));",
+                  "});",
+                  "pm.test('error on page', () => pm.expect(pm.response.json().errors.map(e => e.field)).to.include('page'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "Create order",
           "request": {
             "method": "POST",
@@ -1036,6 +1794,292 @@
                   "    pm.expect(o.id).to.be.above(10000);",
                   "    pm.expect(o.customer.id).to.eql(Number(pm.collectionVariables.get('customerId')));",
                   "    pm.expect(o.products.map(p => p.id)).to.eql([Number(pm.collectionVariables.get('productId'))]);",
+                  "});",
+                  "pm.collectionVariables.set('orderId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get order by id (with its products)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/order/{{orderId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "order",
+                "{{orderId}}"
+              ]
+            },
+            "description": "Run after 'Create order', which stores orderId."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('order shape is {id, description, customer{id, name}, products[]}', () => {",
+                  "    const o = pm.response.json();",
+                  "    pm.expect(Object.keys(o)).to.have.members(['id', 'description', 'customer', 'products']);",
+                  "    pm.expect(Object.keys(o.customer)).to.have.members(['id', 'name']);",
+                  "});",
+                  "pm.test('is the order just created, with its customer and product', () => {",
+                  "    const o = pm.response.json();",
+                  "    pm.expect(o.id).to.eql(Number(pm.collectionVariables.get('orderId')));",
+                  "    pm.expect(o.customer.id).to.eql(Number(pm.collectionVariables.get('customerId')));",
+                  "    pm.expect(o.products.map(p => p.id)).to.eql([Number(pm.collectionVariables.get('productId'))]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get product by id (lists the new order)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/products/{{productId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "products",
+                "{{productId}}"
+              ]
+            },
+            "description": "End to end: create product, create order with it, then the product lists that order."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('orders contains the order just created', () => pm.expect(pm.response.json().orders).to.include(Number(pm.collectionVariables.get('orderId'))));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get order by id (legacy order -> no products)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/order/1",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "order",
+                "1"
+              ]
+            },
+            "description": "Orders from the demo data predate products."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('order shape is {id, description, customer{id, name}, products[]}', () => {",
+                  "    const o = pm.response.json();",
+                  "    pm.expect(Object.keys(o)).to.have.members(['id', 'description', 'customer', 'products']);",
+                  "    pm.expect(Object.keys(o.customer)).to.have.members(['id', 'name']);",
+                  "});",
+                  "pm.test('products is []', () => pm.expect(pm.response.json().products).to.eql([]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get order (unknown id -> 404)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/order/999999999",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "order",
+                "999999999"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 404', () => pm.response.to.have.status(404));",
+                  "pm.test('RFC 7807 problem+json with a matching status', () => {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().status).to.eql(404);",
+                  "});",
+                  "pm.test('no internals in the body', () => {",
+                  "    const text = pm.response.text().toLowerCase();",
+                  "    ['exception', 'jackson', 'hibernate', 'springframework', 'sql', 'at com.'].forEach(s => pm.expect(text).to.not.include(s));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get order (id 0 -> 404)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/order/0",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "order",
+                "0"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 404', () => pm.response.to.have.status(404));",
+                  "pm.test('RFC 7807 problem+json with a matching status', () => {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().status).to.eql(404);",
+                  "});",
+                  "pm.test('no internals in the body', () => {",
+                  "    const text = pm.response.text().toLowerCase();",
+                  "    ['exception', 'jackson', 'hibernate', 'springframework', 'sql', 'at com.'].forEach(s => pm.expect(text).to.not.include(s));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get order (non-numeric id -> 400)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/order/abc",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "order",
+                "abc"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('RFC 7807 problem+json with a matching status', () => {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().status).to.eql(400);",
+                  "});",
+                  "pm.test('no internals in the body', () => {",
+                  "    const text = pm.response.text().toLowerCase();",
+                  "    ['exception', 'jackson', 'hibernate', 'springframework', 'sql', 'at com.'].forEach(s => pm.expect(text).to.not.include(s));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get order (id overflowing a long -> 400)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/order/99999999999999999999",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "order",
+                "99999999999999999999"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('RFC 7807 problem+json with a matching status', () => {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().status).to.eql(400);",
+                  "});",
+                  "pm.test('no internals in the body', () => {",
+                  "    const text = pm.response.text().toLowerCase();",
+                  "    ['exception', 'jackson', 'hibernate', 'springframework', 'sql', 'at com.'].forEach(s => pm.expect(text).to.not.include(s));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Get order (blank id -> 400)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/order/%20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "order",
+                "%20"
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('RFC 7807 problem+json with a matching status', () => {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().status).to.eql(400);",
+                  "});",
+                  "pm.test('no internals in the body', () => {",
+                  "    const text = pm.response.text().toLowerCase();",
+                  "    ['exception', 'jackson', 'hibernate', 'springframework', 'sql', 'at com.'].forEach(s => pm.expect(text).to.not.include(s));",
                   "});"
                 ]
               }
@@ -1174,6 +2218,209 @@
                   "    pm.expect(pm.response.json().status).to.eql(400);",
                   "});",
                   "pm.test('error reported on productIds', () => pm.expect(pm.response.json().errors.map(e => e.field)).to.include('productIds'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create order (101 productIds -> 400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/order",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "order"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"description\":\"Postman Order\",\"customerId\":{{customerId}},\"productIds\":{{tooManyProductIds}}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('tooManyProductIds', JSON.stringify(Array.from({length: 101}, (_, i) => i + 1)));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('RFC 7807 problem+json with a matching status', () => {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().status).to.eql(400);",
+                  "});",
+                  "pm.test('no internals in the body', () => {",
+                  "    const text = pm.response.text().toLowerCase();",
+                  "    ['exception', 'jackson', 'hibernate', 'springframework', 'sql', 'at com.'].forEach(s => pm.expect(text).to.not.include(s));",
+                  "});",
+                  "pm.test('error on productIds', () => pm.expect(pm.response.json().errors.map(e => e.field)).to.include('productIds'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create order (null product id -> 400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/order",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "order"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"description\":\"Postman Order\",\"customerId\":{{customerId}},\"productIds\":[{{productId}},null]}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('RFC 7807 problem+json with a matching status', () => {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().status).to.eql(400);",
+                  "});",
+                  "pm.test('no internals in the body', () => {",
+                  "    const text = pm.response.text().toLowerCase();",
+                  "    ['exception', 'jackson', 'hibernate', 'springframework', 'sql', 'at com.'].forEach(s => pm.expect(text).to.not.include(s));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create order (NUL in description -> 400)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/order",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "order"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\"description\":\"a\\u0000b\",\"customerId\":{{customerId}},\"productIds\":[{{productId}}]}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', () => pm.response.to.have.status(400));",
+                  "pm.test('RFC 7807 problem+json with a matching status', () => {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().status).to.eql(400);",
+                  "});",
+                  "pm.test('no internals in the body', () => {",
+                  "    const text = pm.response.text().toLowerCase();",
+                  "    ['exception', 'jackson', 'hibernate', 'springframework', 'sql', 'at com.'].forEach(s => pm.expect(text).to.not.include(s));",
+                  "});",
+                  "pm.test('error on description', () => pm.expect(pm.response.json().errors.map(e => e.field)).to.include('description'));",
+                  "pm.test('message is \"must not contain NUL characters\"', () => pm.expect(pm.response.json().errors[0].message).to.eql('must not contain NUL characters'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create order (text/plain -> 415)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "text/plain"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/order",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "order"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "Postman Order"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 415', () => pm.response.to.have.status(415));",
+                  "pm.test('RFC 7807 problem+json with a matching status', () => {",
+                  "    pm.expect(pm.response.headers.get('Content-Type')).to.include('application/problem+json');",
+                  "    pm.expect(pm.response.json().status).to.eql(415);",
+                  "});",
+                  "pm.test('no internals in the body', () => {",
+                  "    const text = pm.response.text().toLowerCase();",
+                  "    ['exception', 'jackson', 'hibernate', 'springframework', 'sql', 'at com.'].forEach(s => pm.expect(text).to.not.include(s));",
+                  "});"
                 ]
               }
             }

@@ -46,8 +46,10 @@ transferring 10,100 rows and serialising up to ~1 MB of JSON.
   below 1 is a **400** ProblemDetail). Results are always ordered by `id` ascending so pages are stable.
 - The body is still a plain JSON array (backward compatible). Metadata is in the headers: `X-Total-Count` and an RFC 8288
   `Link` header (`first`, `prev`, `next`, `last`).
-- All of this lives in one place, `controller/Pagination`, so the coming endpoints (customer search, products) reuse it.
-  Links keep any other query parameter (e.g. a future `name=`).
+- All of this lives in one place, `controller/Pagination`, shared by `/customer`, the customer search and `/products`.
+  Links keep any other query parameter, such as the search term in `name=`.
+- `page` is capped at 21,474,836 (`Integer.MAX_VALUE / 100`): beyond that the row offset `page × size` overflows an
+  `int` and Spring Data fails, so a larger page is a 400 rather than a 500.
 
 ### 2. Constant number of statements per request
 
@@ -131,15 +133,15 @@ Bitmap Heap Scan on "order"  (actual time=0.091..0.444 rows=1941 loops=1)
 
 **Note, not changed: `GenerationType.IDENTITY` disables JDBC insert batching.** Hibernate must execute each INSERT
 immediately to read back the generated id, so `reWriteBatchedInserts` and `hibernate.jdbc.batch_size` have no effect on
-our entities today. (Since Phase 3, `batch_size` does batch the `order_product` join rows, which have no generated id;
-see "Products added in Phase 3".) It does not matter for the current endpoints (one entity insert per POST). Bulk imports would need a pooled
+our entities today. (`batch_size` does batch the `order_product` join rows, which have no generated id; see
+"Products".) It does not matter for the current endpoints (one entity insert per POST). Bulk imports would need a pooled
 sequence (`@SequenceGenerator(allocationSize = 50)` with a matching `INCREMENT BY 50` on the sequence). That gives one
 `nextval` per 50 rows and then real batched inserts. It is a schema plus entity change with a migration to plan, see
 "Considered but not done".
 
 ### 5. Read-only transactions
 
-Both services are `@Transactional(readOnly = true)` at class level, with `@Transactional` only on the write methods
+All three services (`CustomerService`, `OrderService`, `ProductService`) are `@Transactional(readOnly = true)` at class level, with `@Transactional` only on the write methods
 (confirmed, no change needed). For every GET this means:
 
 - Hibernate sets the session to `FlushMode.MANUAL` and skips dirty checking, so no snapshot comparison of the up to
@@ -156,13 +158,18 @@ transaction ends.
 
 | Request | Statements (before → after) | Entities loaded | Body | Body gzipped |
 |---------|----------------------------|----------------:|-----:|-------------:|
-| `GET /customer` (default page of 20) | 11 → **3** | 10,100 → 1,961 | 503,458 → 97,674 B | 15,390 B |
-| `GET /customer?size=100` (max) | 11 → **3** | 10,100 → 10,100 | 503,458 → 503,458 B | 74,973 B |
-| `GET /order` (default page of 20) | 11 → **2** | 10,100 → 38 | 950,440 → 1,861 B | 639 B |
-| `GET /order?size=100` (max) | 11 → **2** | 10,100 → 163 | 950,440 → 9,398 B | 2,122 B |
+| `GET /customer` (default page of 20) | 11 → **3** | 10,100 → 1,961 | 503,458 → 97,674 B | 15,396 B |
+| `GET /customer?size=100` (max) | 11 → **3** | 10,100 → 10,100 | 503,458 → 503,458 B | 74,980 B |
+| `GET /order` (default page of 20) | 11 → **3** | 10,100 → 38 | 950,440 → 2,141 B | 657 B |
+| `GET /order?size=100` (max) | 11 → **3** | 10,100 → 163 | 950,440 → 10,798 B | 2,159 B |
 
-At a 50 ms RTT, network wait drops from ~550 ms (~5 s without batch fetching) to ~150 ms for `/customer` and ~100 ms for
-`/order`, and it **stays there for any page size and any table size**. (Each transaction also has one commit round
+`GET /order` was 2 statements until products were added; the third is the `IN` query that loads the products of the
+page (see "Products"). Its body now includes `"products": []` for every seed order, which predates products. Bodies
+were re-measured on the current code against the seed data; the gzip sizes are what `curl -H 'Accept-Encoding: gzip'`
+receives.
+
+At a 50 ms RTT, network wait drops from ~550 ms (~5 s without batch fetching) to ~150 ms for `/customer` and `/order`,
+and it **stays there for any page size and any table size**. (Each transaction also has one commit round
 trip, before and after alike.) The `GET /customer?size=100` row is the same data as the old "all customers" response,
 because the seed has exactly 100 customers. For that request the gain is only in round trips and compression; see the
 residual risk below.
@@ -170,18 +177,18 @@ residual risk below.
 These gains are locked in by integration tests:
 
 - `CustomerIntegrationTest`: ≤ 3 statements and no lazy collection fetches for size 1, 20 and 100.
-- `OrderIntegrationTest`: ≤ 2 statements for size 1, 20 and 100. Also covers the `X-Total-Count` / `Link` headers on the
+- `OrderIntegrationTest`: ≤ 3 statements for size 1, 20 and 100, and ≤ 2 for `GET /order/{id}`. Also covers the `X-Total-Count` / `Link` headers on the
   first, middle, last and past-the-end pages, clamping to 100, and 400 on invalid paging.
 - Both classes keep the existing JSON shape checks.
 - `CompressionIntegrationTest`: gzip on a real port.
 - `SchemaIntegrationTest`: the index exists and is valid.
 
-## Lookups added in Phase 2
+## Order lookup and customer search
 
-### `GET /order/{id}`: one statement
+### `GET /order/{id}`: two statements
 
 `OrderRepository.findWithCustomerById` is a derived query with `@EntityGraph(attributePaths = "customer")`. It
-replaces a `findById` followed by a lazy load of the customer (two round trips):
+replaces a `findById` followed by a lazy load of the customer (two round trips) with one statement:
 
 ```sql
 select o.id, o.customer_id, c.id, c.name, o.description
@@ -189,7 +196,8 @@ from "order" o join customer c on c.id = o.customer_id
 where o.id = ?;
 ```
 
-`OrderIntegrationTest` asserts exactly 1 statement and 2 entities loaded.
+The second statement is the products of the order (see "Products"). `OrderIntegrationTest` asserts at most 2
+statements.
 
 ### `GET /customer?name=`: substring search backed by a trigram index
 
@@ -263,7 +271,7 @@ How to read this:
 one of the words in their name". The only difference is that a term containing a space (`"el Do"`) can match across a
 word boundary ("Muri**el Do**nnelly").
 
-## Products added in Phase 3
+## Products
 
 Products are linked to orders many-to-many through `order_product(order_id, product_id)` (`db.changelog-6.yaml`).
 `Order` owns a lazy `@ManyToMany Set<Product> products`, which is only used to write the join rows. `Product` does not
@@ -347,12 +355,10 @@ or replaced by an order count. Both are contract changes, so neither is done her
 | **Read replicas** | Read-only transactions already make routing possible, but it is an infrastructure decision with replication-lag semantics (read-your-own-writes after a POST). Not justified before measuring primary load. |
 | **DTO projections instead of entities** | Would skip entity hydration and persistence-context bookkeeping (the `readOnly` transaction already removes dirty checking). The entity path needs no extra code with MapStruct, and with bounded pages it is not the bottleneck. A good next step for `/customer` if profiling shows hydration cost. |
 | **Split `/customer`'s embedded orders into `/customer/{id}/orders`** | The proper fix for the residual risk below, but it breaks the public `CustomerDTO` contract. It needs a versioning/deprecation decision, so it is a recommended follow-up, not done here. |
-| **IDENTITY → pooled sequence** | Only helps bulk inserts (see above), which no endpoint does. It changes the schema and entities and needs a migration that aligns `INCREMENT BY` with the existing sequences, so it is not worth the risk in this phase. |
+| **IDENTITY → pooled sequence** | Only helps bulk inserts (see above), which no endpoint does. It changes the schema and entities and needs a migration that aligns `INCREMENT BY` with the existing sequences, so it is not worth the risk without a bulk-insert use case. |
 | **`hikari.auto-commit=false` + `hibernate.connection.provider_disables_autocommit`** | Lets Hibernate delay taking a connection and skip the auto-commit toggle. pgjdbc does that toggle client-side (no round trip), so the gain is small. Left as a tuning option. |
 
 ## Known residual risk
-
-The same applies to the order ids embedded in `/products` (see "Residual risk: unbounded order ids per product").
 
 `GET /customer` still embeds **all** orders of each customer on the page. The number of statements is bounded (3), but
 the **rows and bytes are not**: with the seed data a full page of 100 customers is still 10,100 entities and ~500 KB of
@@ -364,12 +370,16 @@ Pagination limits the number of customers, not the size of each one. The recomme
 - expose `GET /customer/{id}/orders` (paginated with the same `Pagination` contract, served by `idx_order_customer_id`);
 - or return order ids / an order count instead of full orders.
 
+The same applies to the order ids embedded in `/products` (see "Residual risk: unbounded order ids per product").
+
 ## How to verify in production
 
 1. **Count statements per request.** Temporarily set `spring.jpa.properties.hibernate.generate_statistics=true` (or
    `logging.level.org.hibernate.stat=DEBUG` for a per-session summary) on one instance. Expect 3 statements for
-   `/customer` (with or without `name`), `/order` and `/products`, and 2 for `/order/{id}` and `/products/{id}`. Turn it off afterwards; statistics
-   have a cost.
+   `/customer` (with or without `name`), `/order` and `/products`, and 2 for `/order/{id}` and `/products/{id}`. Turn it
+   off afterwards; statistics have a cost. Hibernate only counts its own statements: the first time a pooled connection
+   runs the native join-table queries, pgjdbc also sends one `pg_catalog` metadata query, which shows up in
+   `pg_stat_statements` but not in these statistics.
 2. **Watch the pool** through the Hikari metrics (`hikaricp.connections.pending`, `.acquire`, `.usage`, `.timeout`) once
    Actuator/Micrometer is wired in. Pending connections or timeouts mean the pool is too small or queries are slow.
 3. **Check the plans** in `psql`, with real ids:
@@ -398,7 +408,8 @@ Pagination limits the number of customers, not the size of each one. The recomme
 
    -- The index is valid (false would mean a failed CREATE INDEX CONCURRENTLY).
    SELECT indexrelid::regclass, indisvalid FROM pg_index
-   WHERE indexrelid IN ('idx_order_customer_id'::regclass, 'idx_customer_name_trgm'::regclass);
+   WHERE indexrelid IN ('idx_order_customer_id'::regclass, 'idx_customer_name_trgm'::regclass,
+                        'idx_order_product_product_id'::regclass);
    ```
 
 4. **Find slow or chatty statements** with `pg_stat_statements` (`calls`, `mean_exec_time`, `rows`, ordered by

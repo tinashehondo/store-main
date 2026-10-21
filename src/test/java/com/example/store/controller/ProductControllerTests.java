@@ -88,6 +88,18 @@ class ProductControllerTests {
     }
 
     @Test
+    void getAllProductsWithPageWhoseOffsetOverflowsReturns400() throws Exception {
+        mockMvc.perform(get("/products")
+                        .param("page", String.valueOf(Integer.MAX_VALUE))
+                        .param("size", "100"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.errors[0].field").value("page"));
+
+        verifyNoInteractions(productService);
+    }
+
+    @Test
     void getProductByIdReturnsItWithItsOrderIds() throws Exception {
         when(productService.findById(1L)).thenReturn(product(1L, "Widget", 10001L));
 
@@ -113,6 +125,16 @@ class ProductControllerTests {
     @ValueSource(strings = {"abc", "1.5", "99999999999999999999"})
     void getProductByNonNumericOrOverflowingIdReturns400(String id) throws Exception {
         mockMvc.perform(get("/products/{id}", id))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.status").value(400));
+
+        verifyNoInteractions(productService);
+    }
+
+    @Test
+    void getProductByBlankIdReturns400WithAMatchingBody() throws Exception {
+        mockMvc.perform(get("/products/{id}", " "))
                 .andExpect(status().isBadRequest())
                 .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.status").value(400));
@@ -167,6 +189,30 @@ class ProductControllerTests {
                         .content("{\"description\":\"" + "x".repeat(256) + "\"}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errors[0].field").value("description"));
+
+        verify(productService, never()).create(any());
+    }
+
+    @Test
+    void createProductWithNulInDescriptionReturns400() throws Exception {
+        mockMvc.perform(post("/products")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"description\":\"Wid\\u0000get\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].field").value("description"))
+                .andExpect(jsonPath("$.errors[0].message").value("must not contain NUL characters"));
+
+        verify(productService, never()).create(any());
+    }
+
+    @Test
+    void createProductWithDuplicateKeyReturns400() throws Exception {
+        mockMvc.perform(post("/products")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"description\":\"a\",\"description\":\"b\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.detail").value("The request body is not readable."));
 
         verify(productService, never()).create(any());
     }

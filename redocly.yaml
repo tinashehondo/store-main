@@ -1,0 +1,6 @@
+extends:
+  - recommended
+
+rules:
+  # The only server is the documented local one (./gradlew bootRun on port 8080).
+  no-server-example.com: off

@@ -91,6 +91,18 @@ class OrderControllerTests {
     }
 
     @Test
+    void getAllOrdersWithPageWhoseOffsetOverflowsReturns400() throws Exception {
+        mockMvc.perform(get("/order")
+                        .param("page", String.valueOf(Integer.MAX_VALUE))
+                        .param("size", "100"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.errors[0].field").value("page"));
+
+        verify(orderService, never()).findAll(any());
+    }
+
+    @Test
     void getAllOrdersWithNegativeSizeReturns400() throws Exception {
         mockMvc.perform(get("/order").param("size", "-5"))
                 .andExpect(status().isBadRequest())
@@ -132,6 +144,20 @@ class OrderControllerTests {
                 .andExpect(status().isBadRequest())
                 .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.status").value(400));
+
+        verify(orderService, never()).findById(any());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {" ", "\t"})
+    void getOrderByBlankIdReturns400WithAMatchingBody(String id) throws Exception {
+        // The id converts to null; Spring's default body for that says 500 although the response is a 400.
+        mockMvc.perform(get("/order/{id}", id))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.title").value("Bad Request"))
+                .andExpect(jsonPath("$.detail").value("Required path variable 'id' is not present."));
 
         verify(orderService, never()).findById(any());
     }
@@ -257,6 +283,29 @@ class OrderControllerTests {
                         .content("{\"description\":\"" + "x".repeat(256) + "\",\"customerId\":1,\"productIds\":[3]}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errors[0].field").value("description"));
+    }
+
+    @Test
+    void createOrderWithNulInDescriptionReturns400() throws Exception {
+        mockMvc.perform(post("/order")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"description\":\"Test\\u0000Order\",\"customerId\":1,\"productIds\":[3]}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].field").value("description"))
+                .andExpect(jsonPath("$.errors[0].message").value("must not contain NUL characters"));
+
+        verify(orderService, never()).create(any());
+    }
+
+    @Test
+    void createOrderWithDuplicateKeyReturns400() throws Exception {
+        mockMvc.perform(post("/order")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"description\":\"a\",\"description\":\"b\",\"customerId\":1,\"productIds\":[3]}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.detail").value("The request body is not readable."));
+
+        verify(orderService, never()).create(any());
     }
 
     @Test

@@ -1,8 +1,9 @@
 spring:
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5433/store}
-    username: ${DB_USERNAME:admin}
-    password: ${DB_PASSWORD:admin}
+    # No defaults: credentials must come from the environment. The local admin/admin defaults are in the dev profile.
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
     hikari:
       # Fixed-size pool (minimum-idle = maximum-pool-size), as HikariCP recommends: with a remote database, opening a
       # connection costs several round trips (TCP, TLS, auth), so it must never happen on the request path.
@@ -36,9 +37,16 @@ spring:
           fail_on_pagination_over_collection_fetch: true
           # Pad IN lists to powers of two so that pages of different sizes reuse a few SQL strings and execution plans.
           in_clause_parameter_padding: true
+  jackson:
+    parser:
+      # A repeated key ({"name":"x","name":"y"}) is a malformed body (400). Without this, a record with a single field
+      # fails to deserialize it with a type definition error, which surfaces as a 500.
+      strict-duplicate-detection: true
   liquibase:
     change-log: classpath:db/changelog/db.changelog-master.yaml
-    contexts: ${LIQUIBASE_CONTEXTS:demo}
+    # The demo seed data (changeset 2) only runs in the demo context, which the dev and test profiles select. The
+    # default must name a context: with none at all, Liquibase runs every changeset, the demo data included.
+    contexts: ${LIQUIBASE_CONTEXTS:prod}
 
 management:
   endpoints:

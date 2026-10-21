@@ -100,3 +100,8 @@ tasks.jacocoTestCoverageVerification {
 tasks.named('check') {
     dependsOn tasks.jacocoTestCoverageVerification
 }
+// `./gradlew bootRun` is for local development: the dev profile supplies the local credentials and the demo data.
+// The jar and the Docker image get no profile, so a deployment has neither. SPRING_PROFILES_ACTIVE still wins.
+tasks.named('bootRun') {
+    environment 'SPRING_PROFILES_ACTIVE', System.getenv('SPRING_PROFILES_ACTIVE') ?: 'dev'
+}

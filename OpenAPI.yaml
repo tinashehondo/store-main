@@ -2,7 +2,12 @@ openapi: 3.0.0
 info:
   title: store
   version: '1.0'
-  description: A simple store
+  description: >-
+    A simple store. Errors are RFC 7807 `application/problem+json` bodies whose `status` always matches the HTTP status
+    and which never contain stack traces, SQL or parser messages. Besides the responses listed per operation, any path
+    answers 405 (with an `Allow` header) to a method it does not support, and 406 when the `Accept` header excludes
+    JSON; both are problem+json too. JSON request bodies with a repeated key are rejected as malformed (400). The API has
+    no authentication.
   contact:
     name: SecuritEase Dev
     url: 'https://www.securitease.com'
@@ -11,6 +16,8 @@ info:
   license:
     name: Apache 2.0
     url: 'https://www.apache.org/licenses/LICENSE-2.0.htm'
+# No authentication (yet): every operation is public.
+security: []
 servers:
   - url: 'http://localhost:8080'
     description: dev
@@ -61,6 +68,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '409':
           $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
         '500':
@@ -69,7 +78,9 @@ paths:
       description: >-
         Create a new order for an existing customer, containing one or more existing products. Returns 422 if
         `customerId` does not reference an existing customer, or if any of `productIds` does not reference an existing
-        product (the `detail` then lists every missing id, e.g. "Product ids [7, 9] do not exist").
+        product (the `detail` then lists every missing id, e.g. "Product ids [7, 9] do not exist"). The customer is
+        checked first: when it is unknown, the 422 reports only the customer, and unknown products are reported once it
+        is fixed.
       requestBody:
         required: true
         content:
@@ -85,7 +96,7 @@ paths:
         - name: id
           in: path
           required: true
-          description: Id of the order.
+          description: Id of the order. Ids that are 0 or negative do not exist (404).
           schema:
             type: integer
             format: int64
@@ -97,7 +108,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Order'
         '400':
-          description: The id is not a valid 64-bit integer
+          description: The id is blank or not a valid 64-bit integer
           content:
             application/problem+json:
               schema:
@@ -121,8 +132,9 @@ paths:
             Optional search term. When present, only customers whose name contains it are returned: a
             case-insensitive substring match anywhere in the name (e.g. `onnel` and `MURIEL` both match
             "Muriel Donnelly"), so a term containing a space can match across words. Leading and trailing whitespace
-            is ignored; `%`, `_` and `\` are matched literally, not as wildcards. A blank value or more than 255
-            characters is rejected with 400. Results are paginated exactly like the unfiltered list.
+            is ignored; `%`, `_` and `\` are matched literally, not as wildcards. A blank value (including one made
+            only of Unicode whitespace such as an em space), a NUL character or more than 255 characters is rejected
+            with 400. Results are paginated exactly like the unfiltered list.
           schema:
             type: string
             minLength: 1
@@ -168,6 +180,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '409':
           $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
         '500':
           $ref: '#/components/responses/InternalServerError'
       operationId: createCustomer
@@ -224,6 +238,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '409':
           $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
         '500':
           $ref: '#/components/responses/InternalServerError'
       operationId: createProduct
@@ -243,7 +259,7 @@ paths:
         - name: id
           in: path
           required: true
-          description: Id of the product.
+          description: Id of the product. Ids that are 0 or negative do not exist (404).
           schema:
             type: integer
             format: int64
@@ -255,7 +271,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Product'
         '400':
-          description: The id is not a valid 64-bit integer
+          description: The id is blank or not a valid 64-bit integer
           content:
             application/problem+json:
               schema:
@@ -271,23 +287,27 @@ components:
     Page:
       name: page
       in: query
-      description: Zero-based page index. A page past the end returns an empty array.
+      description: >-
+        Zero-based page index. A page past the end returns an empty array. At most 21474836, so that the row offset
+        fits in 32 bits; a larger value is rejected with 400.
       required: false
       schema:
         type: integer
         format: int32
         minimum: 0
+        maximum: 21474836
         default: 0
     Size:
       name: size
       in: query
-      description: Page size. Values above 100 are clamped to 100; values below 1 are rejected with 400.
+      description: >-
+        Page size, at most 100. Larger values are not rejected but clamped to 100 (the `Link` header then carries
+        `size=100`); values below 1 are rejected with 400.
       required: false
       schema:
         type: integer
         format: int32
         minimum: 1
-        maximum: 100
         default: 20
   headers:
     X-Total-Count:
@@ -332,6 +352,12 @@ components:
         application/problem+json:
           schema:
             $ref: '#/components/schemas/ProblemDetail'
+    UnsupportedMediaType:
+      description: The request body is not `application/json`
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
     InternalServerError:
       description: Unexpected server error. No internal details are returned.
       content:
@@ -342,6 +368,7 @@ components:
     Order:
       title: Order
       type: object
+      required: [id, description, customer, products]
       properties:
         id:
           type: integer
@@ -350,6 +377,7 @@ components:
           type: string
         customer:
           type: object
+          required: [id, name]
           properties:
             id:
               type: integer
@@ -361,6 +389,7 @@ components:
           description: The products of the order, sorted by id. Empty for orders created before products existed.
           items:
             type: object
+            required: [id, description]
             properties:
               id:
                 type: integer
@@ -370,6 +399,7 @@ components:
     Product:
       title: Product
       type: object
+      required: [id, description, orders]
       properties:
         id:
           type: integer
@@ -385,6 +415,7 @@ components:
     Customer:
       title: Customer
       type: object
+      required: [id, name, orders]
       properties:
         id:
           type: integer
@@ -393,16 +424,16 @@ components:
           type: string
         orders:
           type: array
+          description: All orders of the customer, sorted by id. Not paginated.
           items:
             type: object
+            required: [id, description]
             properties:
               id:
                 type: integer
                 format: int64
               description:
                 type: string
-                x-stoplight:
-                  id: mq08x82g95zl9
     CreateOrderRequest:
       title: CreateOrderRequest
       type: object
@@ -415,7 +446,7 @@ components:
           type: string
           minLength: 1
           maxLength: 255
-          description: Must not be blank.
+          description: Must not be blank or contain a NUL character.
         customerId:
           type: integer
           format: int64
@@ -440,7 +471,7 @@ components:
           type: string
           minLength: 1
           maxLength: 255
-          description: Must not be blank.
+          description: Must not be blank or contain a NUL character.
     CreateCustomerRequest:
       title: CreateCustomerRequest
       type: object
@@ -451,11 +482,12 @@ components:
           type: string
           minLength: 1
           maxLength: 255
-          description: Must not be blank.
+          description: Must not be blank or contain a NUL character.
     ProblemDetail:
       title: ProblemDetail
       description: RFC 7807 problem details
       type: object
+      required: [type, title, status, instance]
       properties:
         type:
           type: string
@@ -469,7 +501,8 @@ components:
           type: string
         instance:
           type: string
-          format: uri
+          format: uri-reference
+          description: The request path, e.g. `/order/999`.
     ValidationProblemDetail:
       title: ValidationProblemDetail
       allOf:
@@ -481,6 +514,7 @@ components:
               type: array
               items:
                 type: object
+                required: [field, message]
                 properties:
                   field:
                     type: string

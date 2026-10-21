@@ -1,5 +1,6 @@
 package com.example.store.integration;
 
+import com.example.store.controller.Pagination;
 import com.example.store.entity.Customer;
 import com.example.store.repository.CustomerRepository;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -150,6 +151,23 @@ class CustomerIntegrationTest extends AbstractIntegrationTest {
     }
 
     @ParameterizedTest
+    @ValueSource(strings = {"/customer", "/customer?name=a", "/order", "/products"})
+    void collectionsRejectAPageWhoseOffsetOverflowsAndServeTheHighestPage(String path) throws Exception {
+        mockMvc.perform(get(path)
+                        .param("page", String.valueOf(Integer.MAX_VALUE))
+                        .param("size", "100"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.errors[0].field").value("page"));
+
+        mockMvc.perform(get(path)
+                        .param("page", String.valueOf(Pagination.MAX_PAGE))
+                        .param("size", "100"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$").isEmpty());
+    }
+
+    @ParameterizedTest
     @ValueSource(strings = {"MURIEL", "muriel", "mUrIeL DONNELLY", "  Muriel  "})
     void searchIsCaseInsensitiveAndTrimsTheTerm(String name) throws Exception {
         JsonNode customers = search(name);
@@ -271,6 +289,43 @@ class CustomerIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.errors[0].field").value("name"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"\u2003", "\u3000"})
+    void searchWithUnicodeWhitespaceNameReturns400InsteadOfEveryCustomer(String name) throws Exception {
+        mockMvc.perform(get("/customer").param("name", name))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].field").value("name"));
+    }
+
+    @Test
+    void searchWithNulInNameReturns400() throws Exception {
+        mockMvc.perform(get("/customer").param("name", "\u0000"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].field").value("name"));
+    }
+
+    @Test
+    void createCustomerWithNulInNameReturns400AndPersistsNothing() throws Exception {
+        long before = customerRepository.count();
+
+        mockMvc.perform(post("/customer")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"John\\u0000Doe\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].field").value("name"));
+
+        assertThat(customerRepository.count()).isEqualTo(before);
+    }
+
+    @Test
+    void createCustomerWithDuplicateKeyReturns400() throws Exception {
+        mockMvc.perform(post("/customer")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"x\",\"name\":\"y\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON));
     }
 
     private JsonNode search(String name) throws Exception {

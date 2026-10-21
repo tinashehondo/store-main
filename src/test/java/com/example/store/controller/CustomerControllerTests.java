@@ -95,6 +95,30 @@ class CustomerControllerTests {
     }
 
     @Test
+    void getAllCustomersWithPageWhoseOffsetOverflowsReturns400() throws Exception {
+        mockMvc.perform(get("/customer")
+                        .param("page", String.valueOf(Integer.MAX_VALUE))
+                        .param("size", "100"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.errors[0].field").value("page"));
+
+        verifyNoInteractions(customerService);
+    }
+
+    @Test
+    void getAllCustomersAcceptsTheHighestPage() throws Exception {
+        when(customerService.findAll(any())).thenReturn(Page.empty());
+
+        mockMvc.perform(get("/customer")
+                        .param("page", String.valueOf(Pagination.MAX_PAGE))
+                        .param("size", "100"))
+                .andExpect(status().isOk());
+
+        verify(customerService).findAll(PageRequest.of(Pagination.MAX_PAGE, 100, Sort.by("id")));
+    }
+
+    @Test
     void getAllCustomersWithZeroSizeReturns400() throws Exception {
         mockMvc.perform(get("/customer").param("size", "0"))
                 .andExpect(status().isBadRequest())
@@ -145,7 +169,8 @@ class CustomerControllerTests {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"", " ", "   ", "\t", "\n"})
+    // U+2003 em space and U+3000 ideographic space: whitespace that strip() removes, so they must count as blank.
+    @ValueSource(strings = {"", " ", "   ", "\t", "\n", "\u2003", "\u3000", " \u2003\t"})
     void searchCustomersWithBlankNameReturns400(String name) throws Exception {
         mockMvc.perform(get("/customer").param("name", name))
                 .andExpect(status().isBadRequest())
@@ -153,6 +178,26 @@ class CustomerControllerTests {
                 .andExpect(jsonPath("$.status").value(400))
                 .andExpect(jsonPath("$.errors[0].field").value("name"))
                 .andExpect(jsonPath("$.errors[0].message").value("must not be blank"));
+
+        verifyNoInteractions(customerService);
+    }
+
+    @Test
+    void searchCustomersWithNulInNameReturns400() throws Exception {
+        mockMvc.perform(get("/customer").param("name", "do\u0000e"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.errors[0].field").value("name"))
+                .andExpect(jsonPath("$.errors[0].message").value("must not contain NUL characters"));
+
+        verifyNoInteractions(customerService);
+    }
+
+    @Test
+    void searchCustomersWithPageWhoseOffsetOverflowsReturns400() throws Exception {
+        mockMvc.perform(get("/customer").param("name", "doe").param("page", String.valueOf(Integer.MAX_VALUE)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors[0].field").value("page"));
 
         verifyNoInteractions(customerService);
     }
@@ -240,6 +285,32 @@ class CustomerControllerTests {
                         .content("{\"name\":\"" + name + "\"}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errors[0].field").value("name"));
+    }
+
+    @Test
+    void createCustomerWithNulInNameReturns400() throws Exception {
+        mockMvc.perform(post("/customer")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"John\\u0000Doe\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.errors[0].field").value("name"))
+                .andExpect(jsonPath("$.errors[0].message").value("must not contain NUL characters"));
+
+        verify(customerService, never()).create(any());
+    }
+
+    @Test
+    void createCustomerWithDuplicateKeyReturns400WithoutParserDetails() throws Exception {
+        mockMvc.perform(post("/customer")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"x\",\"name\":\"y\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.detail").value("The request body is not readable."))
+                .andExpect(content().string(not(containsString("jackson"))));
+
+        verify(customerService, never()).create(any());
     }
 
     @Test

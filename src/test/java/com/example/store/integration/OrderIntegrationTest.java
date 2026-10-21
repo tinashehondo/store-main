@@ -205,6 +205,14 @@ class OrderIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void getOrderByBlankIdReturns400WithAMatchingBody() throws Exception {
+        mockMvc.perform(get("/order/%20"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.status").value(400));
+    }
+
+    @Test
     void getOrderByNonNumericIdReturns400() throws Exception {
         mockMvc.perform(get("/order/abc"))
                 .andExpect(status().isBadRequest())
