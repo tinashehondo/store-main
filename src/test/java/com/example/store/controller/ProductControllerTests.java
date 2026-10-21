@@ -20,6 +20,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.List;
 
+import static com.example.store.controller.ProblemAssertions.noInternals;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.hasSize;
 import static org.mockito.ArgumentMatchers.any;
@@ -225,6 +226,28 @@ class ProductControllerTests {
                 .andExpect(status().isBadRequest())
                 .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.detail").value("The request body is not readable."));
+    }
+
+    @Test
+    void unsupportedMethodReturns405WithoutInternals() throws Exception {
+        mockMvc.perform(delete("/products/1"))
+                .andExpect(status().isMethodNotAllowed())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.status").value(405))
+                .andExpect(noInternals());
+
+        verifyNoInteractions(productService);
+    }
+
+    @Test
+    void createProductWithUnsupportedMediaTypeReturns415WithoutInternals() throws Exception {
+        mockMvc.perform(post("/products").contentType(MediaType.TEXT_PLAIN).content("Widget"))
+                .andExpect(status().isUnsupportedMediaType())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.status").value(415))
+                .andExpect(noInternals());
+
+        verifyNoInteractions(productService);
     }
 
     private static ProductDTO product(Long id, String description, Long... orderIds) {

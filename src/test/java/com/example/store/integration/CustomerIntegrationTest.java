@@ -15,6 +15,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.web.servlet.MvcResult;
 
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -297,6 +298,22 @@ class CustomerIntegrationTest extends AbstractIntegrationTest {
         mockMvc.perform(get("/customer").param("name", name))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.errors[0].field").value("name"));
+    }
+
+    @Test
+    void searchTermWithASpaceAndAnAmpersandIsMatchedAndKeptEncodedInTheLinks() throws Exception {
+        String token = token();
+        Long id = saveCustomer("Smith & " + token + " Jones").getId();
+
+        // A URI rather than a template, so that MockMvc sends the escapes as they are instead of encoding them again.
+        MockHttpServletResponse response = mockMvc.perform(get(URI.create("/customer?name=h%20%26%20" + token)))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse();
+
+        assertThat(ids(readArray(response))).containsExactly(id);
+        assertThat(links(response.getHeader("Link")).get("first"))
+                .isEqualTo("http://localhost/customer?name=h%20%26%20" + token + "&page=0&size=20");
     }
 
     @Test

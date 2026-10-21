@@ -80,6 +80,15 @@ class ProductIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.detail").value("Product with id 999999999 not found"));
     }
 
+    @ParameterizedTest
+    @ValueSource(longs = {0, -1})
+    void getProductByZeroOrNegativeIdReturns404(long id) throws Exception {
+        mockMvc.perform(get("/products/{id}", id))
+                .andExpect(status().isNotFound())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.detail").value("Product with id " + id + " not found"));
+    }
+
     @Test
     void getProductByNonNumericIdReturns400() throws Exception {
         mockMvc.perform(get("/products/abc"))

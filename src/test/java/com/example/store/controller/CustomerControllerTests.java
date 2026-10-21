@@ -19,8 +19,10 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.net.URI;
 import java.util.List;
 
+import static com.example.store.controller.ProblemAssertions.noInternals;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.not;
@@ -180,6 +182,37 @@ class CustomerControllerTests {
                 .andExpect(jsonPath("$.errors[0].message").value("must not be blank"));
 
         verifyNoInteractions(customerService);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"/customer?name", "/customer?name="})
+    void searchCustomersWithNameWithoutValueReturns400(String url) throws Exception {
+        // "?name=" is a blank value; MockMvc passes a bare "?name" as no value at all. Either way it is not a search
+        // for everything.
+        mockMvc.perform(get(url))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(noInternals());
+
+        verifyNoInteractions(customerService);
+    }
+
+    @Test
+    void searchCustomersPassesTheDecodedTermAndKeepsItEncodedInTheLinks() throws Exception {
+        when(customerService.search(eq("a b&c"), any()))
+                .thenReturn(new PageImpl<>(List.of(customer(1L, "a b&c")), Pagination.pageRequest(0, 1), 2));
+
+        // A URI rather than a template, so that MockMvc sends the escapes as they are instead of encoding them again.
+        mockMvc.perform(get(URI.create("/customer?name=a%20b%26c&size=1")))
+                .andExpect(status().isOk())
+                .andExpect(header().string(
+                                "Link",
+                                "<http://localhost/customer?name=a%20b%26c&page=0&size=1>; rel=\"first\", "
+                                        + "<http://localhost/customer?name=a%20b%26c&page=1&size=1>; rel=\"next\", "
+                                        + "<http://localhost/customer?name=a%20b%26c&page=1&size=1>; rel=\"last\""));
+
+        verify(customerService).search("a b&c", PageRequest.of(0, 1, Sort.by("id")));
     }
 
     @Test
@@ -361,13 +394,31 @@ class CustomerControllerTests {
         mockMvc.perform(delete("/customer"))
                 .andExpect(status().isMethodNotAllowed())
                 .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
-                .andExpect(jsonPath("$.status").value(405));
+                .andExpect(jsonPath("$.status").value(405))
+                .andExpect(header().string("Allow", "GET, POST"))
+                .andExpect(noInternals());
     }
 
     @Test
     void unsupportedMediaTypeReturns415NotCaughtByCatchAll() throws Exception {
         mockMvc.perform(post("/customer").contentType(MediaType.TEXT_PLAIN).content("John Doe"))
-                .andExpect(status().isUnsupportedMediaType());
+                .andExpect(status().isUnsupportedMediaType())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.status").value(415))
+                .andExpect(noInternals());
+
+        verifyNoInteractions(customerService);
+    }
+
+    @Test
+    void createCustomerWithoutBodyReturns400WithoutParserDetails() throws Exception {
+        mockMvc.perform(post("/customer").contentType(MediaType.APPLICATION_JSON))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.detail").value("The request body is not readable."))
+                .andExpect(noInternals());
+
+        verifyNoInteractions(customerService);
     }
 
     private static CustomerDTO customer(Long id, String name, CustomerOrderDTO... orders) {

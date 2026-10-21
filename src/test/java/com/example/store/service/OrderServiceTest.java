@@ -175,6 +175,19 @@ class OrderServiceTest {
     }
 
     @Test
+    void createChecksTheCustomerBeforeTheProducts() {
+        when(customerRepository.findById(999L)).thenReturn(Optional.empty());
+
+        // Both are unknown; only the customer is reported, and the products are not even looked up.
+        assertThatThrownBy(() -> orderService.create(new CreateOrderRequest("Test Order", 999L, Set.of(7L, 9L))))
+                .isInstanceOf(ReferencedResourceNotFoundException.class)
+                .hasMessage("Customer with id 999 does not exist");
+
+        verifyNoInteractions(productRepository);
+        verify(orderRepository, never()).save(any());
+    }
+
+    @Test
     void createWithUnknownProductsThrowsListingAllMissingIdsSortedAndDoesNotPersist() {
         Set<Long> productIds = new LinkedHashSet<>(List.of(9L, 5L, 7L));
         when(customerRepository.findById(1L)).thenReturn(Optional.of(customer(1L, "John Doe")));

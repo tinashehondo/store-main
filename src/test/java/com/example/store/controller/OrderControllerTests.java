@@ -25,6 +25,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.stream.LongStream;
 
+import static com.example.store.controller.ProblemAssertions.noInternals;
 import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasItem;
@@ -326,8 +327,23 @@ class OrderControllerTests {
     }
 
     @Test
-    void unsupportedMethodReturns405() throws Exception {
-        mockMvc.perform(put("/order")).andExpect(status().isMethodNotAllowed());
+    void unsupportedMethodReturns405WithoutInternals() throws Exception {
+        mockMvc.perform(put("/order"))
+                .andExpect(status().isMethodNotAllowed())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.status").value(405))
+                .andExpect(noInternals());
+    }
+
+    @Test
+    void createOrderWithUnsupportedMediaTypeReturns415WithoutInternals() throws Exception {
+        mockMvc.perform(post("/order").contentType(MediaType.TEXT_PLAIN).content("Test Order"))
+                .andExpect(status().isUnsupportedMediaType())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.status").value(415))
+                .andExpect(noInternals());
+
+        verify(orderService, never()).create(any());
     }
 
     private static OrderDTO order(Long id, String description, Long customerId, String customerName) {

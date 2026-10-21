@@ -121,6 +121,20 @@ class OrderIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    void createOrderWithUnknownCustomerAndUnknownProductsReportsTheCustomerAndPersistsNothing() throws Exception {
+        long ordersBefore = orderRepository.count();
+
+        mockMvc.perform(post("/order")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"description\":\"Integration Order\",\"customerId\":999999,"
+                                + "\"productIds\":[999999999]}"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.detail").value("Customer with id 999999 does not exist"));
+
+        assertThat(orderRepository.count()).isEqualTo(ordersBefore);
+    }
+
+    @Test
     void getOrdersKeepsTheExistingJsonShapeAndLegacyOrdersHaveNoProducts() throws Exception {
         // Ids 9901..10000 of the seed data; orders created by other tests have higher ids.
         JsonNode orders =
@@ -202,6 +216,15 @@ class OrderIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.status").value(404))
                 .andExpect(jsonPath("$.detail").value("Order with id 999999999 not found"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(longs = {0, -1})
+    void getOrderByZeroOrNegativeIdReturns404(long id) throws Exception {
+        mockMvc.perform(get("/order/{id}", id))
+                .andExpect(status().isNotFound())
+                .andExpect(content().contentType(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.detail").value("Order with id " + id + " not found"));
     }
 
     @Test
